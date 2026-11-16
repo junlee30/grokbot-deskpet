@@ -1,0 +1,9 @@
+node_modules/
+target/
+dist/
+.runs/
+*.sqlite
+*.sqlite-journal
+.deskpet-token
+.DS_Store
+*.log

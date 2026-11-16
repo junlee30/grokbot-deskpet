@@ -1,0 +1,37 @@
+# NOT deployed. Requires Jun's explicit approval. Never share secrets with jarvis-scheduler.
+#
+# Config for a FUTURE, separate Fly app. Nothing in this repo runs `fly`.
+# Before any deploy (with approval): set DESKPET_PEPPER and DESKPET_PUBLIC_URL as Fly
+# secrets for THIS app only; do not reuse secrets from any other app.
+app = "grokbot-deskpet-relay"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  HOST = "0.0.0.0"
+  PORT = "8787"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 200
+    hard_limit = 250
+
+  [[http_service.checks]]
+    grace_period = "5s"
+    interval = "30s"
+    method = "GET"
+    path = "/health"
+    timeout = "3s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
