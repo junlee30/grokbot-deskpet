@@ -120,12 +120,6 @@ canvas {
   line-height: 14px;
   max-height: 38px;
   overflow: hidden;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  text-overflow: ellipsis;
-  overflow-wrap: anywhere;
   opacity: 0;
   translate: 0 4px;
   pointer-events: none;
@@ -135,9 +129,64 @@ canvas {
   z-index: 3;
 }
 
+/* The text is clamped in its own box so a 3rd line can't peek into the bubble's padding. */
+.bubble .text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  max-height: 28px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+}
+
 .bubble.show {
   opacity: 1;
   translate: 0 0;
+}
+
+/* Persistent working label (src/presence.ts): up to 2 short lines with ellipsis (one line when the
+   column is wide), a small spinning ring in front. Max height = 2 * 13px + 2 * 3px padding + 2px
+   border = 34px, sitting right above the sprite (LABEL_OVERLAP_PX in layout.ts). */
+.bubble.sticky {
+  padding: 3px 7px 3px 6px;
+  font-size: 10.5px;
+  line-height: 13px;
+  max-height: 34px;
+  font-weight: 600;
+  background: rgba(16, 24, 32, 0.9);
+  border-color: #22d3ee;
+}
+
+.bubble.sticky .text {
+  max-height: 26px;
+}
+
+.bubble.sticky .text::before {
+  content: "";
+  display: inline-block;
+  box-sizing: border-box;
+  width: 8px;
+  height: 8px;
+  margin-right: 5px;
+  vertical-align: -0.5px;
+  border-radius: 50%;
+  border: 2px solid rgba(34, 211, 238, 0.3);
+  border-top-color: #22d3ee;
+  animation: deskpet-spin 0.8s linear infinite;
+}
+
+@keyframes deskpet-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bubble.sticky .text::before {
+    animation: none;
+  }
 }
 
 .more {

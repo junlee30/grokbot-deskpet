@@ -21,6 +21,8 @@ export const TOAST_BORDER = 1;
 export const TOAST_MAX_H = TOAST_LINES * TOAST_LINE_H + 2 * TOAST_PAD_Y + 2 * TOAST_BORDER;
 /** How far a toast may dip into the top of its sprite (the head sits a few px below the frame top). */
 export const TOAST_OVERLAP = 6;
+/** The working label sits just above the sprite: the working hop reaches the frame top. */
+export const LABEL_OVERLAP_PX = 0;
 const COL_GAP = 2; // toast inset inside its column
 
 export interface Slot {
@@ -84,14 +86,14 @@ export function toastMaxWidth(slot: Slot): number {
  * Place a toast of the measured size above its pet: centred on the pet, clamped to its column
  * (and so to the window), bottom resting on the pet's head, never above the top edge.
  */
-export function layoutToast(slot: Slot, measuredW: number, measuredH: number, winW: number, winH: number): Box {
+export function layoutToast(slot: Slot, measuredW: number, measuredH: number, winW: number, winH: number, overlap = TOAST_OVERLAP): Box {
   const maxW = toastMaxWidth(slot);
   const width = Math.min(Math.ceil(measuredW), maxW);
   const height = Math.min(Math.ceil(measuredH), TOAST_MAX_H);
   const minLeft = Math.max(slot.x0 + COL_GAP, EDGE);
   const maxLeft = Math.min(slot.x1 - COL_GAP, winW - EDGE) - width;
   const left = Math.round(Math.max(minLeft, Math.min(slot.cx - width / 2, maxLeft)));
-  const bottom = Math.min(slot.spriteTop + TOAST_OVERLAP, winH - EDGE);
+  const bottom = Math.min(slot.spriteTop + overlap, winH - EDGE);
   const top = Math.max(EDGE, bottom - height);
   return { left, top, width, height };
 }

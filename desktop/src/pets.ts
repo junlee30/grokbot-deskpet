@@ -1,6 +1,7 @@
 // Pet model + view: one pet per agent_id, aggregating that agent's sessions.
 import type { DeskPetConfig } from "./config.ts";
-import { layoutToast, toastMaxWidth, type Slot } from "./layout.ts";
+import { LABEL_OVERLAP_PX, layoutToast, toastMaxWidth, type Slot } from "./layout.ts";
+import { bubbleView, carryMessage, sameView, stickyLabel, type BubbleView } from "./presence.ts";
 import type { PetState, StateEvent } from "./relay.ts";
 import { accentFor, type AnimState, type SpriteBank } from "./sprites.ts";
 import { accentHex, AVATAR_DONE_MS, avatarCue, avatarGeometry, colorHex, FacePlayer, parseAvatar, type Avatar } from "./avatar.ts";
@@ -14,6 +15,8 @@ const MAX_SESSIONS = 16;
 interface Session {
   state: PetState;
   at: number;
+  /** Latest message for this session while it stays in the same state (working label). */
+  message?: string;
 }
 
 export function effectiveState(sessions: Iterable<Session>, now: number, staleActiveMs: number): PetState {
@@ -41,7 +44,8 @@ export class Pet {
   private doneSeq = 0;
   private playedDoneSeq = 0;
   private anim: { state: AnimState; start: number } = { state: "idle", start: 0 };
-  private toastTimer: number | undefined;
+  private toastMsg: { text: string; until: number } | null = null;
+  private view: BubbleView = { mode: "hidden" };
   private slot: Slot | null = null;
 
   readonly el: HTMLDivElement;
@@ -50,6 +54,7 @@ export class Pet {
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly label: HTMLDivElement;
+  private readonly bubbleText: HTMLSpanElement;
 
   constructor(id: string, name: string, cfg: DeskPetConfig, art: AvatarBank | null = null) {
     this.id = id;
@@ -66,6 +71,9 @@ export class Pet {
     this.bubble.className = "bubble";
     this.bubble.style.setProperty("--accent", this.accent);
     this.bubble.setAttribute("role", "status");
+    this.bubbleText = document.createElement("span");
+    this.bubbleText.className = "text";
+    this.bubble.append(this.bubbleText);
     this.canvas = document.createElement("canvas");
     this.canvas.width = 32;
     this.canvas.height = 32;
@@ -83,6 +91,7 @@ export class Pet {
     this.el.hidden = slot === null;
     if (!slot) {
       this.bubble.classList.remove("show");
+      this.view = { mode: "hidden" };
       return;
     }
     const w = slot.x1 - slot.x0;
@@ -105,14 +114,14 @@ export class Pet {
     const winW = parent?.clientWidth || window.innerWidth;
     const winH = parent?.clientHeight || window.innerHeight;
     this.bubble.style.maxWidth = `${toastMaxWidth(s)}px`;
-    const box = layoutToast(s, this.bubble.offsetWidth, this.bubble.offsetHeight, winW, winH);
+    const overlap = this.view.mode === "sticky" ? LABEL_OVERLAP_PX : undefined;
+    const box = layoutToast(s, this.bubble.offsetWidth, this.bubble.offsetHeight, winW, winH, overlap);
     this.bubble.style.left = `${box.left}px`;
     this.bubble.style.top = `${box.top}px`;
     this.bubble.style.width = `${box.width}px`;
   }
 
   remove(): void {
-    clearTimeout(this.toastTimer);
     this.el.remove();
     this.bubble.remove();
   }
@@ -139,25 +148,44 @@ export class Pet {
     }
     const at = Math.min(now, Date.parse(e.received_at) || now);
     const fresh = now - at < 10_000;
+    const prev = this.sessions.get(e.session);
     this.sessions.delete(e.session);
     if (this.sessions.size >= MAX_SESSIONS) this.sessions.delete(this.sessions.keys().next().value!);
-    this.sessions.set(e.session, { state: e.state, at });
+    const message = carryMessage(prev, e.state, typeof e.message === "string" ? e.message : undefined);
+    this.sessions.set(e.session, { state: e.state, at, message });
     this.lastActivity = Math.max(this.lastActivity, at);
     // "done" plays once per fresh done event; catch-up replays don't re-trigger it.
     if (e.state === "done" && fresh) this.doneSeq++;
     else if (e.state === "done") this.playedDoneSeq = this.doneSeq;
-    if (e.message && fresh) this.toast(e.message, toastMs);
+    if (e.message && fresh) this.toast(e.message, toastMs, now);
   }
 
-  /** Newest message replaces the previous one; one toast per pet. */
-  toast(text: string, ms: number): void {
-    this.bubble.textContent = text; // textContent: never interpreted as HTML
-    this.bubble.title = text;
+  /** Newest message replaces the previous one; one toast per pet (shown on the next frame). */
+  toast(text: string, ms: number, now = Date.now()): void {
+    this.toastMsg = { text, until: now + ms };
+  }
+
+  /**
+   * Show the toast, or the persistent working label, or nothing (presence.ts decides). Called
+   * every frame; touches the DOM only when what's shown changes.
+   */
+  private syncBubble(now: number, shown: AnimState, staleMs: number): void {
+    const next: BubbleView = this.slot
+      ? bubbleView(this.toastMsg, stickyLabel(shown, this.sessions.values(), now, staleMs), now)
+      : { mode: "hidden" };
+    if (this.toastMsg && now >= this.toastMsg.until) this.toastMsg = null;
+    if (sameView(next, this.view)) return;
+    this.view = next;
+    this.bubble.classList.toggle("sticky", next.mode === "sticky");
+    if (next.mode === "hidden") {
+      this.bubble.classList.remove("show");
+      return;
+    }
+    this.bubbleText.textContent = next.text; // textContent: never interpreted as HTML
+    this.bubble.title = next.full;
     this.bubble.style.width = ""; // re-measure at natural width
     this.positionToast();
-    if (this.slot) this.bubble.classList.add("show");
-    clearTimeout(this.toastTimer);
-    this.toastTimer = window.setTimeout(() => this.bubble.classList.remove("show"), ms);
+    this.bubble.classList.add("show");
   }
 
   renderState(now: number, cfg: DeskPetConfig, offline: boolean): AnimState {
@@ -215,6 +243,7 @@ export class Pet {
     const want = this.renderState(now, cfg, offline);
     if (want !== this.anim.state) this.anim = { state: want, start: now };
     this.el.dataset.state = want;
+    this.syncBubble(now, want, cfg.staleActiveMs);
     if (this.drawAvatarFrame(want, now)) return;
     this.setMode("robot", 32);
     const def = bank.defs[want];
