@@ -1,12 +1,14 @@
 ---
 name: desk-pet
-description: Show this Grok Bot as a pixel-art pet on the user's desktop. Use when the user says "Install the Desk Pet skill and pair with code XXX-XXX" (pair once), and during every turn to post short lifecycle status (thinking, working, juggling, needs_you, done, error) to the Desk Pet relay. Never sends prompts, replies, tool arguments, file contents or secrets.
+description: Show this Grok Bot as a pixel-art pet on the user's desktop, drawn as its own Grok Bot profile picture (avatarShape/avatarColor). Use when the user says "Install the Desk Pet skill and pair with code XXX-XXX" (pair once), and during every turn to post short lifecycle status (thinking, working, juggling, needs_you, done, error) to the Desk Pet relay. Never sends prompts, replies, tool arguments, file contents or secrets.
 ---
 
 # Desk Pet
 
 The user runs a small desktop app ("Desk Pet for Grok Bot", unofficial, working title) that
-shows one pixel-art bot per Grok Bot and animates it from status updates. You can't reach the
+shows one pixel-art pet per Grok Bot and animates it from status updates. Each pet looks like
+that bot's own Grok Bot profile picture (its avatar shape in its avatar colour) when the bot
+sends its `avatar`; otherwise it is a generic robot. You can't reach the
 user's machine, so you post status to a **relay** and the desktop app subscribes to it.
 
 Status is best-effort decoration. **It must never slow down, block or break your real work.**
@@ -26,9 +28,8 @@ Trigger: the user says something like
    2. the `DESK_PET_RELAY_URL` environment variable, if set;
    3. the hosted relay `https://grokbot-deskpet-relay.fly.dev`.
 
-   **The hosted relay is not live yet.** It only works once Jun deploys it. Until then,
-   pairing against it fails (connection error or 404). Say so plainly and carry on with your
-   work. For local development the relay is `http://127.0.0.1:8787`.
+   If pairing fails with a connection error, say so plainly and carry on with your work.
+   For local development the relay is `http://127.0.0.1:8787`.
 
    Only use `https://` URLs, or `http://` for `localhost`/`127.0.0.1`. Exchange the code:
 
@@ -57,7 +58,31 @@ Trigger: the user says something like
    "Paired with Desk Pet. I'll show up on your desktop as Jarvis." If pairing failed, say
    so plainly (for example "that code expired, please click Connect again for a new one").
 
-## 2. When to post which state
+## 2. Your avatar (profile picture)
+
+Your Grok Bot profile (`profile.json`) has `avatarShape` and `avatarColor`. Read them once per
+session and send them with every status post as `"avatar": {"shape": ..., "color": ...}`, so the
+pet looks like you. Send the names exactly as in your profile (lowercase), for example:
+
+```bash
+# PROFILE = path to your own profile.json
+DESK_PET_AVATAR="$(jq -c '{shape: .avatarShape, color: .avatarColor}
+  | select((.shape|type)=="string" and (.color|type)=="string")
+  | {shape: (.shape|ascii_downcase), color: (.color|ascii_downcase)}' "$PROFILE" 2>/dev/null || true)"
+```
+
+Allowed values (the relay rejects anything else with `400`):
+
+- `shape`: `arch bean blob capsule cloud clover crystal cylinder dome egg flower gem heart hex
+  house leaf pebble pumpkin shield sparkle square squircle star tablet teardrop wedge`
+- `color`: `black brown red orange yellow green cyan blue violet magenta gray`
+
+If your profile has no avatar, or a value that isn't on these lists, leave `DESK_PET_AVATAR`
+empty and send no `avatar` (you show up as the robot). The avatar is not secret, but it is only
+names: never send an image, a URL or `avatarPngBase64`. If the user changes your avatar, re-read
+it; the relay keeps the latest one per bot.
+
+## 3. When to post which state
 
 Post at these moments. `session` is an id for the current conversation/task (stable across
 the turn, max 128 characters, no personal data). Something like `chat-<short random id>` is fine.
@@ -81,16 +106,27 @@ Notes:
 - After `done`, the pet celebrates once and settles to idle. It falls asleep by itself later,
   so you don't need to post `idle` or `sleeping`.
 
-## 3. The exact call
+## 4. The exact call
 
 ```bash
 desk_pet() {  # usage: desk_pet <state> <event> [message]
   [ -n "${DESK_PET_TOKEN:-}" ] && [ -n "${DESK_PET_RELAY_URL:-}" ] || return 0
-  curl -sS -m 3 -o /dev/null -X POST "$DESK_PET_RELAY_URL/v1/events" \
+  local body code
+  body="$(jq -nc --arg s "$DESK_PET_SESSION" --arg st "$1" --arg ev "$2" --arg msg "${3:-}" \
+    --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson av "${DESK_PET_AVATAR:-null}" \
+    '{agent_id: "jarvis", agent_name: "Jarvis", session: $s, state: $st, event: $ev, ts: $ts}
+     + (if $msg != "" then {message: $msg} else {} end)
+     + (if $av != null then {avatar: $av} else {} end)')" || return 0
+  code="$(curl -sS -m 3 -o /dev/null -w '%{http_code}' -X POST "$DESK_PET_RELAY_URL/v1/events" \
     -H "Authorization: Bearer $DESK_PET_TOKEN" \
     -H 'Content-Type: application/json' \
-    -d "{\"agent_id\":\"jarvis\",\"agent_name\":\"Jarvis\",\"session\":\"$DESK_PET_SESSION\",\"state\":\"$1\",\"event\":\"$2\",${3:+\"message\":\"$3\",}\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-    >/dev/null 2>&1 || true
+    --data-binary "$body" 2>/dev/null)" || return 0
+  # Relays older than 0.3.0 reject the avatar field: drop it for this session and resend once.
+  if [ "$code" = "400" ] && [ -n "${DESK_PET_AVATAR:-}" ]; then
+    DESK_PET_AVATAR=""
+    desk_pet "$@"
+  fi
+  return 0
 }
 
 desk_pet thinking turn_start
@@ -109,11 +145,14 @@ Rules for this call:
 - **Never run with `set -x`** (or any shell tracing or verbose curl, `-v`). Tracing would
   print the Authorization header.
 - Body must be JSON with exactly these fields: `agent_id`, `agent_name` (optional),
-  `session`, `state`, `event`, `message` (optional), `ts` (ISO-8601). Unknown fields are
-  rejected. Max body 4 KiB. Escape quotes if you build JSON by hand, or build it with a JSON
-  tool.
+  `session`, `state`, `event`, `message` (optional), `ts` (ISO-8601), `avatar` (optional,
+  `{"shape","color"}`, relay 0.3.0 and later). Unknown fields are rejected. Max body 4 KiB.
+  Build the JSON with a JSON tool (as above) rather than by hand.
+- A `400` while sending an avatar means the relay is older than 0.3.0 or the avatar isn't on
+  the allowlist: stop sending `avatar` for the session (the function above does this) and keep
+  posting status without it.
 
-## 4. The `message` field: privacy rules
+## 5. The `message` field: privacy rules
 
 `message` is an optional, at most **160 characters**, one-line hint shown as a small bubble
 on the user's desktop for a few seconds. The relay doesn't store it.
@@ -130,7 +169,7 @@ Only put a short, generic status there, e.g. `Running tests`, `Waiting for your 
 
 When in doubt, omit `message`.
 
-## 5. Unpairing, re-pairing and privacy
+## 6. Unpairing, re-pairing and privacy
 
 - The user can unpair from the desktop app (Settings, then Unpair). That revokes the token
   immediately and later posts get `401`. When you get `401`, stop posting, delete
@@ -141,8 +180,8 @@ When in doubt, omit `message`.
 - If the user switches the desktop app to a different relay (for example from local to
   hosted), the old token stops working there; they will give you a new code. Pair again and
   replace both secrets.
-- The relay keeps only a keyed hash of the token and the last state per bot/session (no
-  message bodies), in a small database that survives relay restarts. Silent bots are
+- The relay keeps only a keyed hash of the token, the last state per bot/session (no
+  message bodies) and the latest avatar names per bot, in a small database that survives relay restarts. Silent bots are
   forgotten after 24 hours. The desktop app keeps its copy of the token in the macOS
   Keychain.
 - Desk Pet is an unofficial side project, not an xAI product.

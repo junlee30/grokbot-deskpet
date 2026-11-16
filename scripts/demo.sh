@@ -5,6 +5,10 @@
 #   DESKPET_CODE=K7Q-42M scripts/demo.sh
 #   scripts/demo.sh                # no code: create a pairing here, print only the CODE
 #   scripts/demo.sh --fast ...     # short sleeps (CI / smoke test)
+#   scripts/demo.sh --no-avatars   # send no avatars (pre-0.3.0 events: robots only)
+#
+# Each bot sends its Grok Bot avatar (relay >= 0.3.0): Jarvis blob/black, Claude clover/orange,
+# Scout heart/red.
 #
 # Env: RELAY_URL (default http://127.0.0.1:8787)
 #
@@ -18,15 +22,17 @@ RELAY_URL="${RELAY_URL:-http://127.0.0.1:8787}"
 RELAY_URL="${RELAY_URL%/}"
 CODE="${DESKPET_CODE:-}"
 STEP=1.5
+AVATARS=1
 
 usage() {
-  sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
 for arg in "$@"; do
   case "$arg" in
     --fast) STEP=0.4 ;;
+    --no-avatars) AVATARS=0 ;;
     -h | --help) usage 0 ;;
     -*) echo "unknown flag: $arg" >&2; usage 2 ;;
     *) CODE="$arg" ;;
@@ -41,9 +47,15 @@ json_field() {
   node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const v=JSON.parse(s)[process.argv[1]];if(typeof v==="string")process.stdout.write(v)}catch{}})' "$1"
 }
 
-if ! curl -fsS -m 3 "$RELAY_URL/health" >/dev/null 2>&1; then
+HEALTH="$(curl -fsS -m 5 "$RELAY_URL/health" 2>/dev/null)" || {
   echo "relay not reachable at $RELAY_URL (start it with: scripts/dev.sh)" >&2
   exit 1
+}
+# Relays before 0.3.0 reject the avatar field (unknown fields are a 400): don't send it there.
+RELAY_VERSION="$(printf '%s' "$HEALTH" | json_field version)"
+if [[ "$AVATARS" == 1 ]] && ! printf '%s\n0.3.0\n' "${RELAY_VERSION:-0}" | sort -V -C -r 2>/dev/null; then
+  echo "relay $RELAY_URL is ${RELAY_VERSION:-unknown} (< 0.3.0): sending no avatars"
+  AVATARS=0
 fi
 
 TOKEN=""
@@ -77,11 +89,22 @@ fi
 posted=0
 failed=0
 
+# avatar_json <agent_id>: the bot's Grok Bot avatar ({shape, color}), as in its profile.json.
+avatar_json() {
+  [[ "$AVATARS" == 1 ]] || return 0
+  case "$1" in
+    jarvis) printf '{"shape":"blob","color":"black"}' ;;
+    claude) printf '{"shape":"clover","color":"orange"}' ;;
+    scout) printf '{"shape":"heart","color":"red"}' ;;
+  esac
+}
+
 # post <agent_id> <agent_name> <session> <state> <event> [message]
 post() {
-  local id="$1" name="$2" session="$3" state="$4" event="$5" msg="${6:-}" ts body code
+  local id="$1" name="$2" session="$3" state="$4" event="$5" msg="${6:-}" ts body code avatar
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  body="{\"agent_id\":\"$id\",\"agent_name\":\"$name\",\"session\":\"$session\",\"state\":\"$state\",\"event\":\"$event\",\"ts\":\"$ts\"${msg:+,\"message\":\"$msg\"}}"
+  avatar="$(avatar_json "$id")"
+  body="{\"agent_id\":\"$id\",\"agent_name\":\"$name\",\"session\":\"$session\",\"state\":\"$state\",\"event\":\"$event\",\"ts\":\"$ts\"${msg:+,\"message\":\"$msg\"}${avatar:+,\"avatar\":$avatar}}"
   for attempt in 1 2; do
     code="$(curl -sS -m 3 -o /dev/null -w '%{http_code}' -X POST "$RELAY_URL/v1/events" \
       -H @<(printf 'Authorization: Bearer %s\n' "$TOKEN") \

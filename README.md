@@ -6,10 +6,24 @@ A tiny always-on-top desktop pet that shows **one pixel-art Grok Bot per bot** a
 from the bots' lifecycle status: thinking, working, juggling helpers, waiting on you, done,
 error, sleeping. Click a pet to open its link (default `https://grok.com`).
 
-Status: **M1**. The relay is production-ready but **not deployed**. The native macOS app keeps
-its token in the Keychain. Original code and art, Apache-2.0 (see `LICENSE`).
+Status: **M2**. Relay **0.3.0** (the hosted relay still runs 0.2.0 until it is redeployed). The
+native macOS app keeps its token in the Keychain. Original code and art, Apache-2.0 (see
+`LICENSE`). The Grok Bot avatar art is **not** in this repo: it is copied from your installed
+Grok Bot app at build time (see below).
 
-What M1 adds:
+What M2 adds:
+
+- **Each bot looks like its own Grok Bot profile picture.** Bots send an optional
+  `avatar: {shape, color}` (their profile's `avatarShape` / `avatarColor`). The relay validates
+  it against the 26 shapes and 11 colours and keeps the latest avatar per bot. The desktop draws
+  that shape in that colour, animated with the app's own blink/glance frames and cadence, with
+  state cues (badges, dots, juggling balls, hops, shakes, sparkles) around it. Bots without an
+  avatar, or builds without the art, show the robot (accented in the avatar colour if known).
+- `scripts/import-grokbot-art.mjs` copies the face strips and the avatar palette from
+  `/Applications/Grok Bot.app` into `desktop/public/grokbot-art/` (gitignored) before every
+  desktop build.
+
+What M1 added:
 
 - **Persistent relay**: SQLite. Pairings survive a restart and catch-up works after one.
 - **Hardened relay**:
@@ -52,7 +66,10 @@ desktop/    Tauri v2 app; frontend is Vite + TypeScript, no framework
   src-tauri/src/relay.rs  relay HTTP + SSE client (backoff, Last-Event-ID, wake detection)
   src-tauri/src/secrets.rs  Keychain (keyring crate)
   src-tauri/src/window_state.rs  window position memory
-skill/SKILL.md            draft Grok Bot skill: pairing + when/how to post status
+  src/avatar.ts           avatar logic: strip tinting, face cadence, state cues, geometry (pure, tested)
+  src/avatar-bank.ts      loads public/grokbot-art/ (gitignored, imported) and draws avatars
+skill/SKILL.md            draft Grok Bot skill: pairing + when/how to post status (+ avatar)
+scripts/import-grokbot-art.mjs  copies Grok Bot avatar art + palette from the installed app
 scripts/demo.sh           fake bots (Jarvis, Claude, Scout) cycling through states
 scripts/dev.sh            start relay / web prototype / tauri dev / tests
 ```
@@ -105,6 +122,13 @@ All bodies are JSON (`Content-Type: application/json`), max **4 KiB**.
 | `event`      | string | required, ≤ 64, e.g. `turn_start tool_start helper_start waiting turn_end error heartbeat` |
 | `message`    | string | optional, ≤ 160 chars, no control chars; shown as a toast, **never stored** |
 | `ts`         | string | required, ISO-8601 |
+| `avatar`     | object | optional (relay ≥ 0.3.0), exactly `{shape, color}`; `shape` one of `arch bean blob capsule cloud clover crystal cylinder dome egg flower gem heart hex house leaf pebble pumpkin shield sparkle square squircle star tablet teardrop wedge`, `color` one of `black brown red orange yellow green cyan blue violet magenta gray` (case-insensitive, stored lowercase); `null` = not sent |
+
+The relay keeps the **latest avatar per bot** (any session) and attaches it to every `state`
+event for that bot, live and in catch-up, so the desktop gets it even from sessions that didn't
+send it. It is forgotten with the bot's states (24 h silence, agent eviction) and on unpair.
+Relays before 0.3.0 reject `avatar` as an unknown field; the skill and `demo.sh` handle that by
+not sending it.
 
 Unknown fields → `400`. Errors: `400` schema/JSON, `401` missing/bad/revoked token, `413` body
 > 4 KiB (enforced while streaming), `415` not JSON, `429` rate limit (token bucket **60/min,
@@ -229,6 +253,17 @@ for app icons).
   (`window.json`). On launch it's restored only if it is on a connected monitor, and clamped
   fully onto that monitor. Otherwise the window is centred. There is no Dock icon on macOS, so
   quit from the ⚙ settings panel (hover the window).
+- **Grok Bot avatars** (M2): a bot that sends `avatar` is drawn as its own profile picture:
+  the app's face strip for that shape, tinted to the avatar colour exactly like the app tints
+  its menu-bar icon, eye holes filled white, and a 1 px outline (light for dark colours, dark
+  for light ones) so it reads on any desktop. Rendering is nearest-neighbour at an integer
+  scale: Large draws the @2x strip on a 48 px canvas at 2 CSS px per pixel, Small at 1, tiny
+  columns use the @1x strip. Idle uses the app's own face cadence (blink every 2.8–5.5 s,
+  sometimes double, or a glance left/right/up). States: thinking looks up with thought dots;
+  working hops with a spinner badge and eyes sweeping; juggling orbits three balls; needs_you
+  bounces with a blinking `!` badge; error shakes with a red `×`; done hops with sparkles and a
+  `✓` (once); sleeping closes its eyes with rising z's; offline dims. Without the imported art
+  (or for bots without an avatar) the robot below is used, with the avatar colour as accent.
 - One pet per `agent_id`, each in its own column, name under it, accent colour per bot (Jarvis
   teal, Claude orange, Scout violet, others hashed into a fixed palette). Frames are 32×32 at
   integer 3×, 2× or 1×, whichever fits; ⚙ **Pet size** caps it at Large (3×) or Small (2×).
@@ -252,7 +287,7 @@ for app icons).
   - 401 or `revoked`: the token is deleted from the Keychain and the app returns to the
     pairing screen.
 - **Relay URL** (⚙): defaults to `http://127.0.0.1:8787`.
-  - Presets: **Local**, and **Hosted (not deployed yet)** = `https://grokbot-deskpet-relay.fly.dev`.
+  - Presets: **Local**, and **Hosted** = `https://grokbot-deskpet-relay.fly.dev`.
   - Validation: https is required, except plain http for localhost. No path, query or
     credentials.
   - **Changing the relay means pairing again**, because a token belongs to one relay host. The
@@ -297,18 +332,42 @@ for app icons).
   by a global failed-attempt lock.
 - Unpair (settings) revokes the token server-side immediately and closes its streams.
 
-## Deploy (not done)
+## Deploy
 
-`relay/Dockerfile` and `relay/fly.toml` are for a *future, standalone* Fly app,
-`grokbot-deskpet-relay`.
+> As of M2 (2026-11-16) the hosted relay answers `/health` with version **0.2.0**. Relay 0.3.0
+> (avatars) is **not** deployed; until it is, bots and `demo.sh` send no avatars to it and pets
+> stay robots. Redeploying is Jun's call (nothing in this repo runs `fly`).
 
-- **It is NOT deployed, and deploying requires Jun's explicit approval.**
+`relay/Dockerfile` and `relay/fly.toml` describe the standalone Fly app `grokbot-deskpet-relay`.
+
+- Deploying (or redeploying) requires Jun's explicit approval.
 - It shares nothing with `jarvis-scheduler`, and nothing in this repo runs `fly`.
 - It is a single machine (`--ha=false`), because state is SQLite on one volume.
+- The 0.3.0 migration (an `avatars` table) runs automatically on start and is additive; an
+  existing database and existing pairings keep working.
 
-The exact, reviewed command list, cost estimate (about $2–3/month) and teardown are in
-`.runs/m1-deploy-plan.md`. Until it is deployed, the **Hosted** preset and the skill's default
-relay won't answer.
+The reviewed command list, cost estimate and teardown are in `.runs/m1-deploy-plan.md`.
+
+## Grok Bot avatar art (import, not committed)
+
+```bash
+node scripts/import-grokbot-art.mjs          # or: cd desktop && npm run art
+#   --app "/Applications/Grok Bot.app"  (or env GROKBOT_APP)  --from-dir <extracted asar>
+#   --out <dir>  --strict (exit 1 if nothing imported)  --quiet
+```
+
+- Runs automatically as `prebuild` of `desktop` (`npm run build`, so also `cargo tauri build`).
+  Without the Grok Bot app it prints a warning and the build continues with robot art only.
+- Reads `Contents/Resources/app.asar` read-only (no extraction, no dependencies) and checks
+  each file's SHA-256 against the asar's integrity record.
+- Copies `bot-<shape>-face@2x.png` and `bot-<shape>-face.png` (26 shapes, 29 frames each:
+  rest, blink close ×4, blink open ×3, glance left/right/up ×7) and writes `manifest.json`
+  with the frame sizes, the app version and the **palette**: the app's avatar colour list
+  (`{id, label, value}` entries, found in the renderer bundle, the same list its tray uses to
+  tint these strips). Only if that list is missing does it fall back to `--x-<color>-500` CSS
+  variables, and the manifest records which source was used.
+- `desktop/public/grokbot-art/` is gitignored: Grok Bot's art and palette are not ours and
+  must not be committed or redistributed. A built `.app` contains them, so keep builds local.
 
 ## Known gaps
 
