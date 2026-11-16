@@ -1,0 +1,87 @@
+//! Relay token storage in the OS keychain (macOS Keychain via the `keyring` crate).
+//!
+//! service = "com.grokbot.deskpet", account = "relay-token:<relay host[:port]>".
+//! A token belongs to exactly one relay, so changing the relay means pairing again.
+//! Nothing in here logs or returns the token to the webview.
+
+use keyring::Entry;
+
+pub const SERVICE: &str = "com.grokbot.deskpet";
+
+/// Keychain account for a (normalised) relay URL, e.g. `relay-token:127.0.0.1:8787`.
+pub fn account_for(relay: &url::Url) -> String {
+    let host = relay.host_str().unwrap_or("unknown");
+    match relay.port() {
+        Some(p) => format!("relay-token:{host}:{p}"),
+        None => format!("relay-token:{host}"),
+    }
+}
+
+/// Bearer tokens issued by the relay: 32 random bytes, base64url.
+pub fn looks_like_token(t: &str) -> bool {
+    (16..=256).contains(&t.len()) && t.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+fn entry(relay: &url::Url) -> Result<Entry, String> {
+    Entry::new(SERVICE, &account_for(relay)).map_err(|e| format!("keychain unavailable: {}", kind(&e)))
+}
+
+/// Error description that can never contain secret material.
+fn kind(e: &keyring::Error) -> &'static str {
+    match e {
+        keyring::Error::NoEntry => "no entry",
+        keyring::Error::NoStorageAccess(_) => "access denied",
+        keyring::Error::PlatformFailure(_) => "platform failure",
+        keyring::Error::BadEncoding(_) => "bad encoding",
+        keyring::Error::TooLong(_, _) => "too long",
+        keyring::Error::Invalid(_, _) => "invalid",
+        keyring::Error::Ambiguous(_) => "ambiguous",
+        _ => "error",
+    }
+}
+
+pub fn get(relay: &url::Url) -> Result<Option<String>, String> {
+    match entry(relay)?.get_password() {
+        Ok(t) if looks_like_token(&t) => Ok(Some(t)),
+        Ok(_) => Ok(None),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(format!("keychain read failed: {}", kind(&e))),
+    }
+}
+
+pub fn set(relay: &url::Url, token: &str) -> Result<(), String> {
+    if !looks_like_token(token) {
+        return Err("refusing to store a malformed token".into());
+    }
+    entry(relay)?
+        .set_password(token)
+        .map_err(|e| format!("keychain write failed: {}", kind(&e)))
+}
+
+pub fn delete(relay: &url::Url) -> Result<(), String> {
+    match entry(relay)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(format!("keychain delete failed: {}", kind(&e))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn account_names_include_non_default_ports() {
+        let local = url::Url::parse("http://127.0.0.1:8787").unwrap();
+        let hosted = url::Url::parse("https://grokbot-deskpet-relay.fly.dev").unwrap();
+        assert_eq!(account_for(&local), "relay-token:127.0.0.1:8787");
+        assert_eq!(account_for(&hosted), "relay-token:grokbot-deskpet-relay.fly.dev");
+    }
+
+    #[test]
+    fn token_shape() {
+        assert!(looks_like_token("AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_abcde"));
+        assert!(!looks_like_token("short"));
+        assert!(!looks_like_token("has space in it padding padding"));
+        assert!(!looks_like_token("Bearer\nInjected-Header-Value-xx"));
+    }
+}

@@ -1,5 +1,6 @@
 // Pet model + view: one pet per agent_id, aggregating that agent's sessions.
 import type { DeskPetConfig } from "./config.ts";
+import { layoutToast, toastMaxWidth, type Slot } from "./layout.ts";
 import type { PetState, StateEvent } from "./relay.ts";
 import { accentFor, type AnimState, type SpriteBank } from "./sprites.ts";
 
@@ -33,12 +34,14 @@ export class Pet {
   private playedDoneSeq = 0;
   private anim: { state: AnimState; start: number } = { state: "idle", start: 0 };
   private toastTimer: number | undefined;
+  private slot: Slot | null = null;
 
   readonly el: HTMLDivElement;
+  /** The toast lives in the stage (window coordinates), not inside the pet element. */
+  readonly bubble: HTMLDivElement;
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
   private readonly label: HTMLDivElement;
-  private readonly bubble: HTMLDivElement;
 
   constructor(id: string, name: string, cfg: DeskPetConfig) {
     this.id = id;
@@ -50,6 +53,8 @@ export class Pet {
     this.el.style.setProperty("--accent", this.accent);
     this.bubble = document.createElement("div");
     this.bubble.className = "bubble";
+    this.bubble.style.setProperty("--accent", this.accent);
+    this.bubble.setAttribute("role", "status");
     this.canvas = document.createElement("canvas");
     this.canvas.width = 32;
     this.canvas.height = 32;
@@ -58,7 +63,47 @@ export class Pet {
     this.label = document.createElement("div");
     this.label.className = "name";
     this.label.textContent = name;
-    this.el.append(this.bubble, this.canvas, this.label);
+    this.el.append(this.canvas, this.label);
+  }
+
+  /** Put the pet in its column (or hide it when it doesn't fit: slot null). */
+  place(slot: Slot | null): void {
+    this.slot = slot;
+    this.el.hidden = slot === null;
+    if (!slot) {
+      this.bubble.classList.remove("show");
+      return;
+    }
+    const w = slot.x1 - slot.x0;
+    this.el.style.left = `${slot.x0}px`;
+    this.el.style.width = `${w}px`;
+    this.label.style.maxWidth = `${Math.max(24, w - 4)}px`;
+    const css = `${slot.spriteSize}px`;
+    if (this.canvas.style.width !== css) {
+      this.canvas.style.width = css;
+      this.canvas.style.height = css;
+    }
+    this.positionToast();
+  }
+
+  /** Measure the toast at its column's max width, then clamp it with the pure layout. */
+  private positionToast(): void {
+    const s = this.slot;
+    if (!s || !this.bubble.textContent) return;
+    const parent = this.bubble.parentElement;
+    const winW = parent?.clientWidth || window.innerWidth;
+    const winH = parent?.clientHeight || window.innerHeight;
+    this.bubble.style.maxWidth = `${toastMaxWidth(s)}px`;
+    const box = layoutToast(s, this.bubble.offsetWidth, this.bubble.offsetHeight, winW, winH);
+    this.bubble.style.left = `${box.left}px`;
+    this.bubble.style.top = `${box.top}px`;
+    this.bubble.style.width = `${box.width}px`;
+  }
+
+  remove(): void {
+    clearTimeout(this.toastTimer);
+    this.el.remove();
+    this.bubble.remove();
   }
 
   update(e: StateEvent, now: number, toastMs = 5000): void {
@@ -78,9 +123,13 @@ export class Pet {
     if (e.message && fresh) this.toast(e.message, toastMs);
   }
 
+  /** Newest message replaces the previous one; one toast per pet. */
   toast(text: string, ms: number): void {
     this.bubble.textContent = text; // textContent: never interpreted as HTML
-    this.bubble.classList.add("show");
+    this.bubble.title = text;
+    this.bubble.style.width = ""; // re-measure at natural width
+    this.positionToast();
+    if (this.slot) this.bubble.classList.add("show");
     clearTimeout(this.toastTimer);
     this.toastTimer = window.setTimeout(() => this.bubble.classList.remove("show"), ms);
   }
@@ -98,7 +147,8 @@ export class Pet {
     return s;
   }
 
-  draw(bank: SpriteBank, now: number, cfg: DeskPetConfig, offline: boolean, scale: number): void {
+  draw(bank: SpriteBank, now: number, cfg: DeskPetConfig, offline: boolean): void {
+    if (!this.slot) return;
     const want = this.renderState(now, cfg, offline);
     if (want !== this.anim.state) this.anim = { state: want, start: now };
     const def = bank.defs[want];
@@ -110,11 +160,6 @@ export class Pet {
       if (want === "done") this.playedDoneSeq = this.doneSeq;
     }
     const sheet = bank.sheet(want, this.accent);
-    const css = `${bank.fw * scale}px`;
-    if (this.canvas.style.width !== css) {
-      this.canvas.style.width = css;
-      this.canvas.style.height = `${bank.fh * scale}px`;
-    }
     this.el.dataset.state = want;
     this.ctx.clearRect(0, 0, 32, 32);
     if (sheet) this.ctx.drawImage(sheet, frame * bank.fw, 0, bank.fw, bank.fh, 0, 0, bank.fw, bank.fh);

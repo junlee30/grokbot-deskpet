@@ -1,3 +1,6 @@
+import type { PetSize } from "./layout.ts";
+import { validateRelayUrl } from "./net.ts";
+
 // App configuration: shipped defaults (public/deskpet.config.json) + local overrides from the
 // settings panel (localStorage). In dev builds the idle->sleeping timeout is short.
 
@@ -8,6 +11,9 @@ export interface DeskPetConfig {
   sleepAfterMs: number;
   staleActiveMs: number;
   toastMs: number;
+  /** Layout prefs (persisted): preferred pet size and the remembered left-to-right order. */
+  petSize: PetSize;
+  petOrder: string[];
 }
 
 const SETTINGS_KEY = "deskpet.settings";
@@ -19,9 +25,11 @@ export const DEFAULTS: DeskPetConfig = {
   sleepAfterMs: import.meta.env.DEV ? 30_000 : 5 * 60_000,
   staleActiveMs: 10 * 60_000,
   toastMs: 5000,
+  petSize: "large",
+  petOrder: [],
 };
 
-export type Settings = Partial<Pick<DeskPetConfig, "relayUrl" | "openUrls">>;
+export type Settings = Partial<Pick<DeskPetConfig, "relayUrl" | "openUrls" | "petSize" | "petOrder">>;
 
 function readSettings(): Settings {
   try {
@@ -31,8 +39,9 @@ function readSettings(): Settings {
   }
 }
 
+/** Merge into the saved settings (only non-secret preferences live here). */
 export function saveSettings(s: Settings): void {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...readSettings(), ...s }));
 }
 
 export async function loadConfig(): Promise<DeskPetConfig> {
@@ -53,7 +62,10 @@ export async function loadConfig(): Promise<DeskPetConfig> {
   const s = readSettings();
   if (s.relayUrl) cfg.relayUrl = s.relayUrl;
   if (s.openUrls) cfg.openUrls = { default: s.openUrls.default || cfg.openUrls.default, agents: { ...cfg.openUrls.agents, ...s.openUrls.agents } };
-  cfg.relayUrl = cfg.relayUrl.replace(/\/+$/, "");
+  if (s.petSize === "large" || s.petSize === "small") cfg.petSize = s.petSize;
+  if (Array.isArray(s.petOrder)) cfg.petOrder = s.petOrder.filter((x) => typeof x === "string").slice(0, 64);
+  const v = validateRelayUrl(cfg.relayUrl);
+  cfg.relayUrl = v.ok ? v.url : DEFAULTS.relayUrl;
   return cfg;
 }
 
@@ -72,20 +84,16 @@ export function urlForAgent(cfg: DeskPetConfig, agentId: string): string {
   return safeUrl(cfg.openUrls.agents[agentId]) ?? safeUrl(cfg.openUrls.default) ?? "https://grok.com";
 }
 
-// ---- local secrets / pairing state ----
-// TODO(M1): move the token to the OS keychain (e.g. a Tauri keyring plugin). For M0 it lives in
-// localStorage, which is scoped to the app's webview origin.
-const TOKEN_KEY = "deskpet.token";
+// ---- local pairing state (NOT the token) ----
+// The relay token lives in the macOS Keychain, handled entirely by the Rust side (see
+// src-tauri/src/secrets.rs); the webview never sees it. In the browser prototype (vite, no
+// Tauri) it is held in memory only, so a reload means pairing again.
+// Stored here: the pending code shown on screen (short-lived) and a "paired" hint for boot.
+const LEGACY_TOKEN_KEY = "deskpet.token"; // M0 kept the token here; migrated + deleted on boot
 const PENDING_KEY = "deskpet.pending";
 const PAIRED_KEY = "deskpet.paired";
 
-export const secrets = {
-  token(): string | null {
-    return localStorage.getItem(TOKEN_KEY);
-  },
-  setToken(t: string): void {
-    localStorage.setItem(TOKEN_KEY, t);
-  },
+export const pairingState = {
   pending(): { code: string; expires_at: string } | null {
     try {
       return JSON.parse(localStorage.getItem(PENDING_KEY) ?? "null");
@@ -105,8 +113,14 @@ export const secrets = {
     else localStorage.removeItem(PAIRED_KEY);
   },
   clear(): void {
-    localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(PENDING_KEY);
     localStorage.removeItem(PAIRED_KEY);
   },
 };
+
+/** Remove and return an M0-era token from localStorage, if one is still there. */
+export function takeLegacyToken(): string | null {
+  const t = localStorage.getItem(LEGACY_TOKEN_KEY);
+  localStorage.removeItem(LEGACY_TOKEN_KEY);
+  return t && /^[A-Za-z0-9_-]{16,256}$/.test(t) ? t : null;
+}
