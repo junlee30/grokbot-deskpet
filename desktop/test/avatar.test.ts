@@ -11,7 +11,8 @@ import {
   avatarCue,
   avatarGeometry,
   avatarStyle,
-  BADGE,
+  axisMap,
+  CLOUD,
   colorHex,
   FACE,
   FACE_FRAMES,
@@ -21,7 +22,12 @@ import {
   IDLE_TIMING,
   luminance,
   parseAvatar,
+  overlayBox,
   processStrip,
+  RING_HEAD,
+  RING_TURN_MS,
+  WORK_CYCLE_MS,
+  warpPlan,
   type AvatarAnim,
   type FaceMode,
 } from "../src/avatar.ts";
@@ -197,73 +203,258 @@ describe("avatar geometry (pixel-crisp integer scale)", () => {
   });
 });
 
+describe("squash/stretch/lean warp (pixel-crisp)", () => {
+  it("axisMap grows or shrinks an axis by whole source lines, in order, keeping both ends", () => {
+    for (const n of [20, 38])
+      for (const d of [-3, -2, -1, 0, 1, 2, 3]) {
+        const m = axisMap(n, d);
+        assert.equal(m.length, n + d, `n=${n} d=${d}`);
+        assert.equal(m[0], 0);
+        assert.equal(m[m.length - 1], n - 1);
+        for (let i = 1; i < m.length; i++) assert.ok(m[i] - m[i - 1] >= 0 && m[i] - m[i - 1] <= 2);
+      }
+    assert.deepEqual(axisMap(5, 0), [0, 1, 2, 3, 4]);
+  });
+
+  it("no warp is a single 1:1 copy of the whole frame", () => {
+    assert.deepEqual(warpPlan(38, 0, 0, 0), { width: 38, height: 38, left: 0, blocks: [{ sx: 0, sy: 0, w: 38, h: 38, dx: 0, dy: 0 }] });
+  });
+
+  it("every warped pixel is covered exactly once by an integer 1:1 block from the right source pixel", () => {
+    for (const n of [20, 38])
+      for (const [sx, sy, lean] of [[2, -3, 0], [-2, 3, 0], [1, -2, 0], [0, 0, 2], [0, 0, -2], [2, -3, 1], [-1, 2, -2]]) {
+        const p = warpPlan(n, sx, sy, lean);
+        assert.equal(p.width, n + sx);
+        assert.equal(p.height, n + sy);
+        assert.ok(p.blocks.length <= 24, `few draw calls (${p.blocks.length})`);
+        const rows = axisMap(n, sy);
+        const cols = axisMap(n, sx);
+        const seen = new Map<string, number>();
+        for (const b of p.blocks) {
+          for (const v of [b.sx, b.sy, b.w, b.h, b.dx, b.dy]) assert.ok(Number.isInteger(v));
+          assert.ok(b.sx >= 0 && b.sy >= 0 && b.sx + b.w <= n && b.sy + b.h <= n, "source inside the frame");
+          for (let j = 0; j < b.h; j++)
+            for (let i = 0; i < b.w; i++) {
+              const key = `${b.dx + i},${b.dy + j}`;
+              assert.ok(!seen.has(key), `pixel ${key} drawn twice`);
+              seen.set(key, 1);
+              assert.equal(rows[b.dy + j], b.sy + j, "row source");
+            }
+        }
+        assert.equal(seen.size, p.width * p.height);
+        // Without lean, the column mapping is exact too.
+        if (lean === 0) for (const b of p.blocks) for (let i = 0; i < b.w; i++) assert.equal(cols[b.dx + i], b.sx + i);
+        // Lean shears the top, never the bottom row.
+        const bottom = p.blocks.filter((b) => b.dy + b.h === p.height);
+        assert.equal(Math.min(...bottom.map((b) => b.dx)), 0);
+        if (lean) assert.equal(Math.min(...p.blocks.filter((b) => b.dy === 0).map((b) => b.dx)), lean, "top row shifted by lean");
+      }
+  });
+});
+
 describe("state cues", () => {
   const states: AvatarAnim[] = ["idle", "thinking", "working", "juggling", "needs_you", "done", "error", "sleeping", "offline"];
   for (const size of [32, 64, 96]) {
-    it(`all motion and overlays stay on-grid and inside the canvas (${size}px)`, () => {
+    it(`body, warp and overlays stay on-grid and inside the canvas (${size}px)`, () => {
       const g = avatarGeometry(size);
       for (const st of states)
-        for (let t = 0; t < 6000; t += 37) {
+        for (let t = 0; t < 6000; t += 17) {
           const c = avatarCue(st, t, g);
-          assert.ok(Number.isInteger(c.dx) && Number.isInteger(c.dy), `${st}@${t}`);
-          assert.ok(g.ax + c.dx >= 0 && g.ax + g.art + c.dx <= g.backing, `${st} x in canvas`);
-          assert.ok(g.ay + c.dy >= 0 && g.ay + g.art + c.dy <= g.backing, `${st} y in canvas`);
+          for (const v of [c.dx, c.dy, c.sx, c.sy, c.lean]) assert.ok(Number.isInteger(v), `${st}@${t} integer motion`);
+          const p = warpPlan(g.art, c.sx, c.sy, c.lean);
+          const x = g.ax + c.dx + p.left;
+          const y = g.ay + g.art + c.dy - p.height;
+          for (const b of p.blocks) {
+            assert.ok(x + b.dx >= 0 && x + b.dx + b.w <= g.backing, `${st}@${t} body x in canvas`);
+            assert.ok(y + b.dy >= 0 && y + b.dy + b.h <= g.backing, `${st}@${t} body y in canvas (${y + b.dy})`);
+          }
           for (const o of c.overlays) {
-            assert.ok(Number.isInteger(o.x) && Number.isInteger(o.y), `${st} overlay ${o.kind} on grid`);
-            const w = o.kind === "badge" ? BADGE : o.kind === "dots" ? o.n * 4 : o.kind === "z" ? o.size : o.kind === "ball" ? 4 : o.r + 1;
-            const x0 = o.kind === "spark" ? o.x - o.r : o.x - (o.kind === "ball" ? 1 : 0);
-            assert.ok(x0 >= 0 && x0 + w <= g.backing, `${st} ${o.kind} x=${o.x} inside ${g.backing}`);
-            assert.ok(o.y >= 0 && o.y < g.backing, `${st} ${o.kind} y=${o.y}`);
+            const box = overlayBox(o);
+            assert.ok(Number.isInteger(o.x) && Number.isInteger(o.y), `${st} ${o.kind} on grid`);
+            assert.ok(box.x >= 0 && box.y >= 0 && box.x + box.w <= g.backing && box.y + box.h <= g.backing, `${st}@${t} ${o.kind} ${JSON.stringify(box)} inside ${g.backing}`);
           }
         }
     });
   }
 
-  it("each state reads differently", () => {
-    const g = avatarGeometry(96);
-    const kinds = (st: AvatarAnim, t = 100) => avatarCue(st, t, g).overlays.map((o) => (o.kind === "badge" ? `badge:${o.icon}` : o.kind));
-    assert.deepEqual(kinds("idle"), []);
-    assert.deepEqual(kinds("thinking"), ["dots"]);
-    assert.deepEqual(kinds("working"), ["badge:spinner"]);
-    assert.deepEqual(kinds("juggling"), ["ball", "ball", "ball"]);
-    assert.deepEqual(kinds("needs_you"), ["badge:bang"]);
-    assert.deepEqual(kinds("error"), ["badge:cross"]);
-    assert.ok(kinds("done").includes("badge:check") && kinds("done").includes("spark"));
-    assert.ok(kinds("sleeping", 1000).includes("z"));
-    assert.equal(avatarCue("thinking", 0, g).face, "thinking");
-    assert.equal(avatarCue("sleeping", 0, g).face, "sleeping");
-    // error shakes, needs_you bounces, done hops once then settles.
-    assert.ok(new Set(Array.from({ length: 6 }, (_, i) => avatarCue("error", i * 80, g).dx)).size > 1);
-    assert.ok(Math.min(...Array.from({ length: 8 }, (_, i) => avatarCue("needs_you", i * 80, g).dy)) <= -3);
-    assert.equal(avatarCue("done", AVATAR_DONE_MS - 1, g).dy, 0);
+  const g = avatarGeometry(96);
+  const over = (st: AvatarAnim, from: number, to: number, every = 10) => Array.from({ length: Math.ceil((to - from) / every) }, (_, i) => avatarCue(st, from + i * every, g));
+
+  it("working: a big squash-and-stretch hop with a ring spinning round the waist", () => {
+    const cycle = over("working", 0, WORK_CYCLE_MS);
+    assert.ok(Math.min(...cycle.map((c) => c.dy)) <= -5, "hops at least 5 art px (10 CSS px at large)");
+    assert.ok(Math.min(...cycle.map((c) => c.sy)) <= -2, "squashes");
+    assert.ok(Math.max(...cycle.map((c) => c.sy)) >= 2, "stretches");
+    for (const c of cycle) {
+      assert.equal(c.face, "working");
+      assert.ok(!c.overlays.some((o) => o.kind === "badge"), "no tiny badge any more");
+      const dots = c.overlays.filter((o) => o.kind === "dot");
+      assert.ok(dots.length >= 30, "a whole ring");
+      assert.ok(dots.some((o) => o.behind) && dots.some((o) => !o.behind), "orbits behind and in front of the body");
+      const lit = dots.filter((o) => o.ink);
+      assert.ok(lit.length >= 10 && lit.every((o) => o.w === 2), "a thick outlined comet");
+      const xs = dots.map((o) => o.x);
+      assert.ok(Math.max(...xs) - Math.min(...xs) >= g.art, "ring is wider than the body");
+    }
+    // The comet goes round: its centre moves through all four quadrants over one turn.
+    const centre = (t: number) => {
+      const lit = avatarCue("working", t, g).overlays.filter((o) => o.kind === "dot" && o.ink);
+      const head = lit.find((o) => o.kind === "dot" && o.color === RING_HEAD)!;
+      return [head.x - (g.ax + g.art / 2), head.y];
+    };
+    const xs = Array.from({ length: 8 }, (_, i) => Math.sign(centre((i * RING_TURN_MS) / 8)[0]));
+    assert.ok(xs.includes(1) && xs.includes(-1), `comet head swings left and right: ${xs}`);
+  });
+
+  it("thinking: still, leaning, eyes up, a thought cloud whose dots fill in (nothing like working)", () => {
+    const cs = over("thinking", 0, 4000, 50);
+    for (const c of cs) {
+      assert.equal(c.face, "thinking");
+      assert.ok(c.dy >= -1 && c.dy <= 0 && c.sy === 0 && c.sx === 0, "no hop, no squash");
+      assert.ok(c.lean >= 1, "leans back");
+      const kinds = c.overlays.map((o) => o.kind);
+      assert.deepEqual(kinds, ["puff", "puff", "cloud"]);
+    }
+    const lits = new Set(cs.map((c) => (c.overlays.find((o) => o.kind === "cloud") as { lit: number }).lit));
+    assert.deepEqual([...lits].sort(), [0, 1, 2, 3]);
+    const cloud = cs[0].overlays.find((o) => o.kind === "cloud")!;
+    assert.ok(cloud.y + CLOUD.big.h <= g.ay + 2, "cloud floats above the head");
+  });
+
+  it("every state has its own look at a glance", () => {
+    const sig = (st: AvatarAnim) => {
+      const cs = over(st, 0, 1700, 20);
+      const kinds = new Set(cs.flatMap((c) => c.overlays.map((o) => (o.kind === "badge" ? `badge:${o.icon}` : o.kind))));
+      const hop = Math.min(...cs.map((c) => c.dy)) <= -3;
+      const squash = cs.some((c) => c.sy !== 0);
+      const shake = new Set(cs.map((c) => c.dx)).size > 1;
+      const lean = cs.some((c) => c.lean !== 0);
+      return `${[...kinds].sort().join(",")}|hop=${hop}|squash=${squash}|shake=${shake}|lean=${lean}`;
+    };
+    const all = (["idle", "thinking", "working", "juggling", "needs_you", "error", "done", "sleeping"] as AvatarAnim[]).map((s) => [s, sig(s)]);
+    const uniq = new Set(all.map(([, v]) => v));
+    assert.equal(uniq.size, all.length, JSON.stringify(all, null, 1));
+    // Each overlay family belongs to one state.
+    const owner = (k: string) => all.filter(([, v]) => v.split("|")[0].split(",").includes(k)).map(([s]) => s);
+    assert.deepEqual(owner("cloud"), ["thinking"]);
+    assert.deepEqual(owner("ball"), ["juggling"]);
+    assert.deepEqual(owner("badge:bang"), ["needs_you"]);
+    assert.deepEqual(owner("badge:cross"), ["error"]);
+    assert.deepEqual(owner("badge:check"), ["done"]);
+    assert.deepEqual(owner("z"), ["sleeping"]);
+    assert.deepEqual(owner("dot").sort(), ["done", "working"]);
+    assert.deepEqual(avatarCue("idle", 100, g).overlays, []);
+  });
+
+  it("juggling throws balls high over the head; needs_you hops and wiggles; error slumps and shudders", () => {
+    const jug = over("juggling", 0, 1500, 25);
+    assert.ok(jug.every((c) => c.overlays.filter((o) => o.kind === "ball").length === 3));
+    assert.ok(jug.some((c) => c.overlays.some((o) => o.kind === "ball" && o.y < g.ay)), "balls go above the head");
+    const ny = over("needs_you", 0, 1600, 20);
+    assert.ok(Math.min(...ny.map((c) => c.dy)) <= -3);
+    assert.ok(ny.some((c) => c.lean < 0) && ny.some((c) => c.lean > 0), "wiggles");
+    assert.ok(ny.every((c) => c.overlays.some((o) => o.kind === "badge" && o.icon === "bang")), "the ! never disappears");
+    assert.ok(ny.some((c) => c.overlays.some((o) => o.kind === "badge" && o.rays)), "and it pulses");
+    const er = over("error", 0, 1800, 20);
+    assert.ok(er.every((c) => c.sy < 0 && c.dy === 0), "deflated");
+    assert.ok(new Set(er.map((c) => c.dx)).size > 1, "shudders");
+  });
+
+  it("done: crouch, leap with confetti, then settles calm before handing back to idle", () => {
+    const early = over("done", 0, 900, 10);
+    assert.ok(Math.min(...early.map((c) => c.dy)) <= -6, "a big leap");
+    assert.ok(early.some((c) => c.sy < 0) && early.some((c) => c.sy > 0), "squash and stretch");
+    assert.ok(early.some((c) => c.overlays.filter((o) => o.kind === "dot").length >= 10), "confetti burst");
+    assert.ok(early.slice(15).every((c) => c.overlays.some((o) => o.kind === "badge" && o.icon === "check")));
+    for (const c of over("done", 1500, AVATAR_DONE_MS, 10)) {
+      assert.deepEqual([c.dx, c.dy, c.sx, c.sy, c.lean], [0, 0, 0, 0, 0], "at rest, so idle follows seamlessly");
+      assert.ok(!c.overlays.some((o) => o.kind === "dot"), "confetti gone");
+    }
+    assert.ok(AVATAR_DONE_MS >= 1500 && AVATAR_DONE_MS <= 2500, "brief");
   });
 });
 
 describe("drawAvatar", () => {
-  it("draws the tinted frame at the cue offset with integer coordinates only", () => {
-    const g = avatarGeometry(96);
-    const s = synthStrip(29, 36);
-    const p = processStrip(s.data, s.width, s.height, "#FF2244");
-    const strip = { canvas: { width: p.width, height: p.height, data: p.data }, frameSize: p.frameSize, frames: p.frames };
-    for (const st of ["idle", "working", "juggling", "needs_you", "done", "error", "sleeping"] as AvatarAnim[]) {
+  const g = avatarGeometry(96);
+  const mk = (hex: string, frames = 29) => {
+    const s = synthStrip(frames, 36);
+    const p = processStrip(s.data, s.width, s.height, hex);
+    return { p, strip: { canvas: { width: p.width, height: p.height, data: p.data }, frameSize: p.frameSize, frames: p.frames } };
+  };
+  const bbox = (ctx: FakeCtx, rgb: [number, number, number]) => {
+    let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1;
+    for (let y = 0; y < ctx.height; y++)
+      for (let x = 0; x < ctx.width; x++) {
+        const [r, gg, b, a] = ctx.rgbaAt(x, y);
+        if (a === 255 && r === rgb[0] && gg === rgb[1] && b === rgb[2]) {
+          x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+        }
+      }
+    return { w: x1 - x0 + 1, h: y1 - y0 + 1, bottom: y1, cx: (x0 + x1) / 2 };
+  };
+
+  it("draws the tinted frame with integer 1:1 copies only, from the right strip frame", () => {
+    const { p, strip } = mk("#FF2244");
+    for (const st of ["idle", "thinking", "working", "juggling", "needs_you", "done", "error", "sleeping"] as AvatarAnim[])
+      for (const t of [0, 200, 330, 700]) {
+        const ctx = new FakeCtx(g.backing, g.backing);
+        const cue = avatarCue(st, t, g);
+        drawAvatar(ctx as unknown as CanvasRenderingContext2D, strip as never, g, 3, cue);
+        assert.equal(ctx.imageSmoothingEnabled, false);
+        for (const c of ctx.calls) for (const a of c.args) assert.ok(Number.isInteger(a), `${st}: ${c.op}(${c.args}) not integer`);
+        const imgs = ctx.calls.filter((c) => c.op === "drawImage");
+        assert.ok(imgs.length >= 1);
+        for (const { args } of imgs) {
+          assert.ok(args[0] >= 3 * p.frameSize && args[0] + args[2] <= 4 * p.frameSize, "frame 3 of the strip");
+          assert.equal(args[6], args[2], "1:1 copy (CSS does the integer upscale)");
+          assert.equal(args[7], args[3]);
+        }
+        // The middle of the (moved, warped) body is the avatar colour.
+        const bare = new FakeCtx(g.backing, g.backing);
+        drawAvatar(bare as unknown as CanvasRenderingContext2D, strip as never, g, 3, { ...cue, overlays: [] });
+        const plan = warpPlan(p.frameSize, cue.sx, cue.sy, cue.lean);
+        const mx = g.ax + cue.dx + plan.left + Math.floor(plan.width / 2) + Math.round(cue.lean / 2);
+        const my = g.ay + g.art + cue.dy - Math.floor(plan.height / 3);
+        assert.deepEqual(bare.rgbaAt(mx, my), [255, 34, 68, 255], `${st}@${t}`);
+      }
+  });
+
+  it("squash is wider and flatter, stretch taller and narrower; the feet stay on the ground", () => {
+    const { strip } = mk("#FF2244");
+    const draw = (sx: number, sy: number) => {
       const ctx = new FakeCtx(g.backing, g.backing);
-      const cue = avatarCue(st, 200, g);
-      drawAvatar(ctx as unknown as CanvasRenderingContext2D, strip as never, g, 3, cue);
-      assert.equal(ctx.imageSmoothingEnabled, false);
-      for (const c of ctx.calls) for (const a of c.args) assert.ok(Number.isInteger(a), `${st}: ${c.op}(${c.args}) not integer`);
-      const img = ctx.calls.find((c) => c.op === "drawImage")!.args;
-      assert.deepEqual(img.slice(0, 4), [3 * p.frameSize, 0, p.frameSize, p.frameSize], "frame 3 of the strip");
-      assert.equal(img[6], img[2], "1:1 copy, scaling is done by CSS at an integer factor");
-      // Body pixel in the avatar colour, at the moved position.
-      const [r, gg, b, a] = ctx.rgbaAt(img[4] + 6, img[5] + 30);
-      assert.deepEqual([r, gg, b, a], [255, 34, 68, 255], st);
-    }
+      drawAvatar(ctx as unknown as CanvasRenderingContext2D, strip as never, g, 0, { face: "idle", dx: 0, dy: 0, sx, sy, lean: 0, overlays: [] });
+      return bbox(ctx, [255, 34, 68]);
+    };
+    const rest = draw(0, 0);
+    const sq = draw(2, -3);
+    const st = draw(-2, 3);
+    assert.deepEqual([sq.w - rest.w, sq.h - rest.h], [2, -3]);
+    assert.deepEqual([st.w - rest.w, st.h - rest.h], [-2, 3]);
+    assert.equal(sq.bottom, rest.bottom);
+    assert.equal(st.bottom, rest.bottom);
+    assert.ok(Math.abs(sq.cx - rest.cx) <= 0.5 && Math.abs(st.cx - rest.cx) <= 0.5, "stays centred");
+  });
+
+  it("the working ring is drawn behind and in front of the body; the thought cloud is white with dark dots", () => {
+    const { strip } = mk("#FF2244");
+    const cue = avatarCue("working", 300, g);
+    const ctx = new FakeCtx(g.backing, g.backing);
+    drawAvatar(ctx as unknown as CanvasRenderingContext2D, strip as never, g, 0, cue);
+    const front = cue.overlays.find((o) => o.kind === "dot" && !o.behind && o.ink)!;
+    assert.notDeepEqual(ctx.rgbaAt(front.x, front.y).slice(0, 3), [255, 34, 68], "front ring covers the body");
+    const tc = avatarCue("thinking", 1000, g); // 2 dots lit
+    const c2 = new FakeCtx(g.backing, g.backing);
+    drawAvatar(c2 as unknown as CanvasRenderingContext2D, strip as never, g, 0, tc);
+    const cl = tc.overlays.find((o) => o.kind === "cloud")!;
+    assert.deepEqual(c2.rgbaAt(cl.x + 2, cl.y + 3), [255, 255, 255, 255], "cloud fill");
+    const lit = (cl as { lit: number }).lit;
+    const [x, y] = [cl.x + 1 + 3, cl.y + 1 + 3];
+    assert.deepEqual(c2.rgbaAt(x + 1, y + 1).slice(0, 3), lit >= 1 ? [0x23, 0x26, 0x2f] : [0xc3, 0xc8, 0xd2]);
   });
 
   it("clamps an out-of-range face slot", () => {
-    const g = avatarGeometry(96);
-    const s = synthStrip(2, 36);
-    const p = processStrip(s.data, s.width, s.height, "#000000");
+    const { p } = mk("#000000", 2);
     const ctx = new FakeCtx(g.backing, g.backing);
     drawAvatar(ctx as unknown as CanvasRenderingContext2D, { canvas: { width: p.width, height: p.height, data: p.data }, frameSize: p.frameSize, frames: 2 } as never, g, 25, avatarCue("idle", 0, g));
     assert.equal(ctx.calls.find((c) => c.op === "drawImage")!.args[0], p.frameSize);
