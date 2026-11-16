@@ -18,7 +18,7 @@ import { GlobalFailureLock, RateLimiter } from "./ratelimit.ts";
 import { Store, type StoredState } from "./store.ts";
 import { validateEvent, validatePairRequest } from "./validate.ts";
 
-export const VERSION = "0.2.0";
+export const VERSION = "0.3.0";
 
 interface Subscriber {
   res: ServerResponse;
@@ -254,8 +254,13 @@ export function createRelay(config: RelayConfig, store: Store = Store.open(":mem
     const stored: StoredState = { ...rest, received_at };
     const seq = store.putState(tokenHash, stored, config.maxAgentsPerToken, config.maxSessionsPerAgent);
     store.touchToken(tokenHash);
+    // Every state carries the agent's latest avatar, even from sessions that didn't send one.
+    const { avatar: _sent, ...state } = stored;
+    const avatar = store.getAvatar(tokenHash, stored.agent_id);
+    const out: Record<string, unknown> = avatar ? { ...state, avatar } : { ...state };
     // The message goes out live only; it is never stored.
-    broadcast(tokenHash, "state", message ? { ...stored, message } : stored, eventId(seq));
+    if (message) out.message = message;
+    broadcast(tokenHash, "state", out, eventId(seq));
     sendJson(res, 202, { ok: true });
   }
 

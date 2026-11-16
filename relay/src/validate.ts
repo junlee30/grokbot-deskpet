@@ -3,6 +3,25 @@
 export const STATES = ["idle", "thinking", "working", "juggling", "needs_you", "done", "error", "sleeping"] as const;
 export type PetState = (typeof STATES)[number];
 
+/**
+ * Grok Bot profile avatar: the shape and colour names a bot has in its profile.json
+ * (avatarShape / avatarColor). Names only: the art and colour values live in the desktop app.
+ */
+export const AVATAR_SHAPES = [
+  "arch", "bean", "blob", "capsule", "cloud", "clover", "crystal", "cylinder", "dome", "egg", "flower", "gem", "heart",
+  "hex", "house", "leaf", "pebble", "pumpkin", "shield", "sparkle", "square", "squircle", "star", "tablet", "teardrop",
+  "wedge",
+] as const;
+export const AVATAR_COLORS = [
+  "black", "brown", "red", "orange", "yellow", "green", "cyan", "blue", "violet", "magenta", "gray",
+] as const;
+export type AvatarShape = (typeof AVATAR_SHAPES)[number];
+export type AvatarColor = (typeof AVATAR_COLORS)[number];
+export interface Avatar {
+  shape: AvatarShape;
+  color: AvatarColor;
+}
+
 export interface StatusEvent {
   agent_id: string;
   agent_name: string;
@@ -11,9 +30,10 @@ export interface StatusEvent {
   event: string;
   message?: string;
   ts: string;
+  avatar?: Avatar;
 }
 
-const ALLOWED = new Set(["agent_id", "bot", "agent_name", "session", "state", "event", "message", "ts"]);
+const ALLOWED = new Set(["agent_id", "bot", "agent_name", "session", "state", "event", "message", "ts", "avatar"]);
 const AGENT_ID_RE = /^[a-z0-9_-]{1,64}$/;
 const EVENT_RE = /^[A-Za-z0-9_.:-]{1,64}$/;
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:?\d{2})$/;
@@ -30,6 +50,26 @@ function textField(v: unknown, name: string, max: number, required: boolean): Re
   if (len > max) return { ok: false, error: `${name} must be at most ${max} characters` };
   if (CONTROL_RE.test(v)) return { ok: false, error: `${name} must not contain control characters` };
   return { ok: true, value: v };
+}
+
+/** Optional avatar: absent or null means "not sent"; otherwise exactly {shape, color} from the allowlists. */
+export function validateAvatar(v: unknown): Result<Avatar | undefined> {
+  if (v === undefined || v === null) return { ok: true, value: undefined };
+  if (typeof v !== "object" || Array.isArray(v)) return { ok: false, error: "avatar must be an object {shape, color}" };
+  const o = v as Record<string, unknown>;
+  for (const k of Object.keys(o)) {
+    if (k !== "shape" && k !== "color") return { ok: false, error: `unknown avatar field: ${k.slice(0, 32)}` };
+  }
+  // Case-insensitive ("Orange" from a hand-edited profile is still orange); stored lowercase.
+  const shape = typeof o.shape === "string" && o.shape.length <= 16 ? o.shape.toLowerCase() : null;
+  if (shape === null || !(AVATAR_SHAPES as readonly string[]).includes(shape)) {
+    return { ok: false, error: `avatar.shape must be one of ${AVATAR_SHAPES.join(", ")}` };
+  }
+  const color = typeof o.color === "string" && o.color.length <= 16 ? o.color.toLowerCase() : null;
+  if (color === null || !(AVATAR_COLORS as readonly string[]).includes(color)) {
+    return { ok: false, error: `avatar.color must be one of ${AVATAR_COLORS.join(", ")}` };
+  }
+  return { ok: true, value: { shape: shape as AvatarShape, color: color as AvatarColor } };
 }
 
 export function validateEvent(body: unknown): Result<StatusEvent> {
@@ -68,6 +108,9 @@ export function validateEvent(body: unknown): Result<StatusEvent> {
     return { ok: false, error: "ts must be an ISO-8601 timestamp" };
   }
 
+  const avatar = validateAvatar(o.avatar);
+  if (!avatar.ok) return avatar;
+
   const value: StatusEvent = {
     agent_id: agentId,
     agent_name: name.value && name.value.trim() ? name.value : agentId,
@@ -77,6 +120,7 @@ export function validateEvent(body: unknown): Result<StatusEvent> {
     ts: o.ts,
   };
   if (message.value) value.message = message.value;
+  if (avatar.value) value.avatar = avatar.value;
   return { ok: true, value };
 }
 

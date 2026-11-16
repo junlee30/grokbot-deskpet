@@ -4,13 +4,14 @@
 //   tokens:   HMAC(token) + created/paired/last-seen/revoked timestamps
 //   pairings: HMAC(code)  -> token sealed under a code-derived key (deleted on redemption), expiry
 //   states:   HMAC(token), agent, session -> last-known state JSON (message stripped) + event seq
+//   avatars:  HMAC(token), agent -> latest Grok Bot avatar {shape, color} names (M2)
 //   meta:     schema version, stream epoch, event sequence counter
 import { randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { digestEqual, type Sealed } from "./crypto.ts";
-import type { StatusEvent } from "./validate.ts";
+import type { Avatar, StatusEvent } from "./validate.ts";
 
 export interface TokenRecord {
   hash: string;
@@ -27,6 +28,7 @@ export interface Pairing {
   used_at: number | null;
 }
 
+/** What the relay stores and replays. `avatar` is the agent's latest known avatar (attached on read). */
 export type StoredState = Omit<StatusEvent, "message"> & { received_at: string };
 
 export interface SeqState {
@@ -75,6 +77,19 @@ const MIGRATIONS: Array<(db: DatabaseSync) => void> = [
       CREATE INDEX IF NOT EXISTS states_updated ON states (updated_at);
     `);
   },
+  // 3: M2 latest avatar per (token, agent).
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS avatars (
+        token_hash TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        shape TEXT NOT NULL,
+        color TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (token_hash, agent_id)
+      );
+    `);
+  },
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
@@ -108,6 +123,18 @@ function prepareQueries(db: DatabaseSync) {
     markPaired: db.prepare("UPDATE tokens SET paired_at = ? WHERE hash = ? AND paired_at IS NULL"),
     revoke: db.prepare("UPDATE tokens SET revoked_at = ? WHERE hash = ? AND revoked_at IS NULL"),
     delStatesTok: db.prepare("DELETE FROM states WHERE token_hash = ?"),
+    delAvatarsTok: db.prepare("DELETE FROM avatars WHERE token_hash = ?"),
+    upAvatar: db.prepare(
+      `INSERT INTO avatars (token_hash, agent_id, shape, color, updated_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(token_hash, agent_id) DO UPDATE SET
+         shape = excluded.shape, color = excluded.color, updated_at = excluded.updated_at`,
+    ),
+    getAvatar: db.prepare("SELECT shape, color FROM avatars WHERE token_hash = ? AND agent_id = ?"),
+    delAvatar: db.prepare("DELETE FROM avatars WHERE token_hash = ? AND agent_id = ?"),
+    // Avatars of agents that no longer have any state (evicted, swept).
+    sweepAvatars: db.prepare(
+      "DELETE FROM avatars WHERE NOT EXISTS (SELECT 1 FROM states s WHERE s.token_hash = avatars.token_hash AND s.agent_id = avatars.agent_id)",
+    ),
     delPairTok: db.prepare("DELETE FROM pairings WHERE token_hash = ?"),
     insPair: db.prepare("INSERT INTO pairings (code_hash, token_hash, sealed, expires_at, used_at) VALUES (?, ?, ?, ?, NULL)"),
     getPair: db.prepare("SELECT token_hash, sealed, expires_at, used_at FROM pairings WHERE code_hash = ?"),
@@ -130,7 +157,11 @@ function prepareQueries(db: DatabaseSync) {
        ON CONFLICT(token_hash, agent_id, session) DO UPDATE SET
          state_json = excluded.state_json, updated_at = excluded.updated_at, seq = excluded.seq`,
     ),
-    snapshot: db.prepare("SELECT seq, state_json FROM states WHERE token_hash = ? AND seq > ? ORDER BY seq ASC"),
+    snapshot: db.prepare(
+      `SELECT s.seq, s.state_json, a.shape, a.color FROM states s
+       LEFT JOIN avatars a ON a.token_hash = s.token_hash AND a.agent_id = s.agent_id
+       WHERE s.token_hash = ? AND s.seq > ? ORDER BY s.seq ASC`,
+    ),
     sweepPairs: db.prepare("DELETE FROM pairings WHERE expires_at <= ?"),
     sweepStates: db.prepare("DELETE FROM states WHERE updated_at < ?"),
     // Tokens whose pairing was never redeemed and whose code is long gone.
@@ -203,6 +234,7 @@ export class Store {
     this.tx(() => {
       this.q.revoke.run(this.now(), hash);
       this.q.delStatesTok.run(hash);
+      this.q.delAvatarsTok.run(hash);
       this.q.delPairTok.run(hash);
     });
   }
@@ -228,15 +260,22 @@ export class Store {
     this.q.delPair.run(codeHash);
   }
 
-  /** Store the last-known state for (token, agent, session). Returns its event sequence number. */
+  /**
+   * Store the last-known state for (token, agent, session). Returns its event sequence number.
+   * An avatar in `s` replaces the agent's stored avatar; the state row itself never holds one.
+   */
   putState(tokenHash: string, s: StoredState, maxAgents: number, maxSessions: number): number {
     const t = this.now();
+    const { avatar, ...state } = s;
     return this.tx(() => {
       if (!this.q.hasAgent.get(tokenHash, s.agent_id)) {
         const n = (this.q.agentCount.get(tokenHash) as { n: number }).n;
         if (n >= maxAgents) {
           const old = this.q.oldestAgent.get(tokenHash) as { agent_id: string } | undefined;
-          if (old) this.q.delAgent.run(tokenHash, old.agent_id);
+          if (old) {
+            this.q.delAgent.run(tokenHash, old.agent_id);
+            this.q.delAvatar.run(tokenHash, old.agent_id);
+          }
         }
       } else if (!this.q.hasSession.get(tokenHash, s.agent_id, s.session)) {
         const n = (this.q.sessionCount.get(tokenHash, s.agent_id) as { n: number }).n;
@@ -246,18 +285,34 @@ export class Store {
         }
       }
       const seq = ++this.seq;
-      this.q.upState.run(tokenHash, s.agent_id, s.session, JSON.stringify(s), t, seq);
+      this.q.upState.run(tokenHash, s.agent_id, s.session, JSON.stringify(state), t, seq);
+      if (avatar) this.q.upAvatar.run(tokenHash, s.agent_id, avatar.shape, avatar.color, t);
       this.q.setMeta.run("seq", String(seq));
       return seq;
     });
   }
 
-  /** Last-known (agent, session) states for a token with seq > afterSeq, oldest first. */
+  /** Latest avatar an agent sent (any session), or null. */
+  getAvatar(tokenHash: string, agentId: string): Avatar | null {
+    const r = this.q.getAvatar.get(tokenHash, agentId) as { shape: string; color: string } | undefined;
+    return r ? ({ shape: r.shape, color: r.color } as Avatar) : null;
+  }
+
+  /** Last-known (agent, session) states for a token with seq > afterSeq, oldest first, each with
+   *  its agent's latest avatar (if any). */
   snapshot(tokenHash: string, afterSeq = 0): SeqState[] {
-    return (this.q.snapshot.all(tokenHash, afterSeq) as Array<{ seq: number; state_json: string }>).map((r) => ({
-      seq: r.seq,
-      state: JSON.parse(r.state_json) as StoredState,
-    }));
+    const rows = this.q.snapshot.all(tokenHash, afterSeq) as Array<{
+      seq: number;
+      state_json: string;
+      shape: string | null;
+      color: string | null;
+    }>;
+    return rows.map((r) => {
+      const state = JSON.parse(r.state_json) as StoredState;
+      delete state.avatar; // rows written before M2 never had one; be explicit anyway
+      if (r.shape && r.color) state.avatar = { shape: r.shape, color: r.color } as Avatar;
+      return { seq: r.seq, state };
+    });
   }
 
   /** Highest event sequence number handed out so far. */
@@ -271,6 +326,7 @@ export class Store {
     return this.tx(() => {
       const pairings = Number(this.q.sweepPairs.run(t).changes);
       const states = Number(this.q.sweepStates.run(t - stateTtlMs).changes);
+      this.q.sweepAvatars.run();
       const retired = Number(this.q.sweepUnpaired.run(t, t - unpairedGraceMs).changes);
       const purged = Number(this.q.purgeRevoked.run(t - REVOKED_RETENTION_MS).changes);
       return { pairings, states, tokens: retired + purged };
@@ -296,7 +352,7 @@ export class Store {
   /** Every row of every table (used by tests to prove no raw token/code/message is stored). */
   dump(): Record<string, unknown[]> {
     const out: Record<string, unknown[]> = {};
-    for (const t of ["tokens", "pairings", "states", "meta"]) out[t] = this.db.prepare(`SELECT * FROM ${t}`).all();
+    for (const t of ["tokens", "pairings", "states", "avatars", "meta"]) out[t] = this.db.prepare(`SELECT * FROM ${t}`).all();
     return out;
   }
 

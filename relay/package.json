@@ -1,6 +1,6 @@
 {
   "name": "grokbot-deskpet-relay",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Relay for Desk Pet for Grok Bot (unofficial, working title). Bots POST status, desktop subscribes via SSE.",
   "license": "Apache-2.0",
