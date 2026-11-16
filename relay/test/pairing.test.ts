@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { CODE_RE, normalizeCode } from "../src/crypto.ts";
-import { openSqlite } from "../src/store.ts";
 import { goodEvent, openStream, pairStart, postEvent, startRelay } from "./helpers.ts";
 
 function pair(base: string, body: unknown) {
@@ -112,26 +111,34 @@ describe("token hashed at rest", () => {
       await pair(h.base, { code: p.code });
       dump = JSON.stringify(h.relay.store.dump());
       assert.ok(!dump.includes(p.token), "raw token found in store after redemption");
-      assert.equal(h.relay.store.tokens.size, 1);
-      assert.match([...h.relay.store.tokens.keys()][0]!, /^[0-9a-f]{64}$/);
+      const live = h.relay.store.liveTokenHashes();
+      assert.equal(live.length, 1);
+      assert.match(live[0]!, /^[0-9a-f]{64}$/);
     } finally {
       await h.close();
     }
   });
 
-  it("never writes the raw token to the optional SQLite file", async () => {
+  it("never writes the raw token, code or message to the SQLite file", async () => {
     const dir = mkdtempSync(join(tmpdir(), "deskpet-"));
     const file = join(dir, "relay.sqlite");
-    const h = await startRelay({}, await openSqlite(file));
+    const h = await startRelay({}, { dbPath: file });
     let token = "";
+    let code = "";
     try {
-      token = (await pairStart(h.base)).token;
-      assert.equal((await postEvent(h.base, token, goodEvent())).status, 202);
+      ({ token, code } = await pairStart(h.base));
+      // pending pairing on disk: only the sealed token
+      let bytes = readFileSync(file);
+      assert.ok(!bytes.includes(Buffer.from(token)), "raw token in sqlite file (pending)");
+      assert.equal((await pair(h.base, { code })).status, 200);
+      assert.equal((await postEvent(h.base, token, goodEvent({ message: "private-hint-xyz" }))).status, 202);
+      bytes = Buffer.concat([readFileSync(file), readFileSync(`${file}-wal`)]);
+      for (const needle of [token, code, "private-hint-xyz"]) assert.ok(!bytes.includes(Buffer.from(needle)), "secret in sqlite file");
     } finally {
       await h.close();
     }
     const bytes = readFileSync(file);
-    assert.ok(!bytes.includes(Buffer.from(token)), "raw token in sqlite file");
+    for (const needle of [token, code, "private-hint-xyz"]) assert.ok(!bytes.includes(Buffer.from(needle)), "secret in sqlite file");
     rmSync(dir, { recursive: true, force: true });
   });
 });

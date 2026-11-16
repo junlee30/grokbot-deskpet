@@ -1,16 +1,23 @@
-// In-memory relay state, with optional SQLite persistence of token *hashes* only.
+// Relay state in SQLite (node:sqlite, synchronous). A file in dev/prod, ":memory:" in tests.
 //
-// Nothing in here ever holds a raw token:
-//   tokens:   HMAC(token) -> metadata
-//   pairings: HMAC(code)  -> { token sealed under a code-derived key, HMAC(token), expiry }
-//   states:   HMAC(token) -> agent -> session -> last-known state (message bodies are NOT kept)
+// Nothing in here ever holds a raw token, a raw pairing code or a message body:
+//   tokens:   HMAC(token) + created/paired/last-seen/revoked timestamps
+//   pairings: HMAC(code)  -> token sealed under a code-derived key (deleted on redemption), expiry
+//   states:   HMAC(token), agent, session -> last-known state JSON (message stripped) + event seq
+//   meta:     schema version, stream epoch, event sequence counter
+import { randomBytes } from "node:crypto";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { digestEqual, type Sealed } from "./crypto.ts";
 import type { StatusEvent } from "./validate.ts";
 
 export interface TokenRecord {
   hash: string;
   created_at: number;
+  paired_at: number | null;
   last_seen_at: number;
+  revoked_at: number | null;
 }
 
 export interface Pairing {
@@ -22,163 +29,295 @@ export interface Pairing {
 
 export type StoredState = Omit<StatusEvent, "message"> & { received_at: string };
 
-interface SessionEntry {
+export interface SeqState {
+  seq: number;
   state: StoredState;
-  updated_at: number;
 }
 
-export interface TokenPersistence {
-  load(): Iterable<[string, TokenRecord]>;
-  put(hash: string, rec: TokenRecord): void;
-  delete(hash: string): void;
-  close(): void;
+/** Ordered, idempotent migrations. Each runs once; PRAGMA user_version records progress. */
+const MIGRATIONS: Array<(db: DatabaseSync) => void> = [
+  // 1: M0 had only `tokens (hash, created_at, last_seen_at)`; IF NOT EXISTS keeps that table.
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS tokens (
+        hash TEXT PRIMARY KEY,
+        created_at INTEGER NOT NULL,
+        last_seen_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    `);
+  },
+  // 2: M1 columns and tables.
+  (db) => {
+    const cols = new Set((db.prepare("PRAGMA table_info(tokens)").all() as Array<{ name: string }>).map((c) => c.name));
+    if (!cols.has("revoked_at")) db.exec("ALTER TABLE tokens ADD COLUMN revoked_at INTEGER");
+    // Tokens from M0 had been redeemed already (or were dead): treat them as paired.
+    if (!cols.has("paired_at")) db.exec("ALTER TABLE tokens ADD COLUMN paired_at INTEGER; UPDATE tokens SET paired_at = created_at");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS pairings (
+        code_hash TEXT PRIMARY KEY,
+        token_hash TEXT NOT NULL,
+        sealed TEXT,
+        expires_at INTEGER NOT NULL,
+        used_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS pairings_expires ON pairings (expires_at);
+      CREATE INDEX IF NOT EXISTS pairings_token ON pairings (token_hash);
+      CREATE TABLE IF NOT EXISTS states (
+        token_hash TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        session TEXT NOT NULL,
+        state_json TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        seq INTEGER NOT NULL,
+        PRIMARY KEY (token_hash, agent_id, session)
+      );
+      CREATE INDEX IF NOT EXISTS states_updated ON states (updated_at);
+    `);
+  },
+];
+
+export const SCHEMA_VERSION = MIGRATIONS.length;
+
+/** Revoked token rows are kept this long (so a revoked token keeps getting 401), then purged. */
+const REVOKED_RETENTION_MS = 7 * 24 * 3_600_000;
+
+export function migrate(db: DatabaseSync): number {
+  const cur = (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
+  for (let v = cur; v < MIGRATIONS.length; v++) {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      MIGRATIONS[v]!(db);
+      db.exec(`PRAGMA user_version = ${v + 1}`);
+      db.exec("COMMIT");
+    } catch (e) {
+      db.exec("ROLLBACK");
+      throw e;
+    }
+  }
+  return MIGRATIONS.length;
+}
+
+function prepareQueries(db: DatabaseSync) {
+  return {
+    getMeta: db.prepare("SELECT value FROM meta WHERE key = ?"),
+    setMeta: db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"),
+    insToken: db.prepare("INSERT INTO tokens (hash, created_at, last_seen_at, paired_at, revoked_at) VALUES (?, ?, ?, NULL, NULL)"),
+    getToken: db.prepare("SELECT hash, created_at, paired_at, last_seen_at, revoked_at FROM tokens WHERE hash = ?"),
+    touch: db.prepare("UPDATE tokens SET last_seen_at = ? WHERE hash = ?"),
+    markPaired: db.prepare("UPDATE tokens SET paired_at = ? WHERE hash = ? AND paired_at IS NULL"),
+    revoke: db.prepare("UPDATE tokens SET revoked_at = ? WHERE hash = ? AND revoked_at IS NULL"),
+    delStatesTok: db.prepare("DELETE FROM states WHERE token_hash = ?"),
+    delPairTok: db.prepare("DELETE FROM pairings WHERE token_hash = ?"),
+    insPair: db.prepare("INSERT INTO pairings (code_hash, token_hash, sealed, expires_at, used_at) VALUES (?, ?, ?, ?, NULL)"),
+    getPair: db.prepare("SELECT token_hash, sealed, expires_at, used_at FROM pairings WHERE code_hash = ?"),
+    usePair: db.prepare("UPDATE pairings SET sealed = NULL, used_at = ? WHERE code_hash = ? AND used_at IS NULL"),
+    delPair: db.prepare("DELETE FROM pairings WHERE code_hash = ?"),
+    agentCount: db.prepare("SELECT COUNT(DISTINCT agent_id) AS n FROM states WHERE token_hash = ?"),
+    hasAgent: db.prepare("SELECT 1 AS x FROM states WHERE token_hash = ? AND agent_id = ? LIMIT 1"),
+    oldestAgent: db.prepare(
+      "SELECT agent_id FROM states WHERE token_hash = ? GROUP BY agent_id ORDER BY MAX(updated_at) ASC, MAX(seq) ASC LIMIT 1",
+    ),
+    delAgent: db.prepare("DELETE FROM states WHERE token_hash = ? AND agent_id = ?"),
+    sessionCount: db.prepare("SELECT COUNT(*) AS n FROM states WHERE token_hash = ? AND agent_id = ?"),
+    hasSession: db.prepare("SELECT 1 AS x FROM states WHERE token_hash = ? AND agent_id = ? AND session = ?"),
+    oldestSession: db.prepare(
+      "SELECT session FROM states WHERE token_hash = ? AND agent_id = ? ORDER BY updated_at ASC, seq ASC LIMIT 1",
+    ),
+    delSession: db.prepare("DELETE FROM states WHERE token_hash = ? AND agent_id = ? AND session = ?"),
+    upState: db.prepare(
+      `INSERT INTO states (token_hash, agent_id, session, state_json, updated_at, seq) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(token_hash, agent_id, session) DO UPDATE SET
+         state_json = excluded.state_json, updated_at = excluded.updated_at, seq = excluded.seq`,
+    ),
+    snapshot: db.prepare("SELECT seq, state_json FROM states WHERE token_hash = ? AND seq > ? ORDER BY seq ASC"),
+    sweepPairs: db.prepare("DELETE FROM pairings WHERE expires_at <= ?"),
+    sweepStates: db.prepare("DELETE FROM states WHERE updated_at < ?"),
+    // Tokens whose pairing was never redeemed and whose code is long gone.
+    sweepUnpaired: db.prepare(
+      "UPDATE tokens SET revoked_at = ? WHERE paired_at IS NULL AND revoked_at IS NULL AND created_at < ? AND hash NOT IN (SELECT token_hash FROM pairings)",
+    ),
+    purgeRevoked: db.prepare("DELETE FROM tokens WHERE revoked_at IS NOT NULL AND revoked_at < ?"),
+    ping: db.prepare("SELECT 1 AS ok"),
+  };
 }
 
 export class Store {
-  readonly tokens = new Map<string, TokenRecord>();
-  readonly pairings = new Map<string, Pairing>();
-  readonly states = new Map<string, Map<string, Map<string, SessionEntry>>>();
+  readonly db: DatabaseSync;
+  readonly path: string;
+  /** Random per database: SSE ids from another database (or a wiped one) are recognisably stale. */
+  readonly epoch: string;
+  private seq: number;
   private readonly now: () => number;
-  private readonly persist: TokenPersistence | null;
+  private readonly q: ReturnType<typeof prepareQueries>;
 
-  constructor(now: () => number, persist: TokenPersistence | null = null) {
+  static open(path: string, now: () => number = Date.now): Store {
+    if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    const db = new DatabaseSync(path);
+    if (path !== ":memory:") {
+      db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;");
+    }
+    db.exec("PRAGMA busy_timeout = 2000; PRAGMA foreign_keys = ON;");
+    migrate(db);
+    return new Store(db, path, now);
+  }
+
+  private constructor(db: DatabaseSync, path: string, now: () => number) {
+    this.db = db;
+    this.path = path;
     this.now = now;
-    this.persist = persist;
-    if (persist) for (const [h, r] of persist.load()) this.tokens.set(h, r);
+    this.q = prepareQueries(db);
+    const { getMeta, setMeta } = this.q;
+    let epoch = (getMeta.get("epoch") as { value: string } | undefined)?.value;
+    if (!epoch) {
+      epoch = randomBytes(6).toString("hex");
+      setMeta.run("epoch", epoch);
+    }
+    this.epoch = epoch;
+    const metaSeq = Number((getMeta.get("seq") as { value: string } | undefined)?.value ?? 0);
+    const maxRow = (db.prepare("SELECT MAX(seq) AS m FROM states").get() as { m: number | null }).m ?? 0;
+    this.seq = Math.max(metaSeq, maxRow);
   }
 
   addToken(hash: string): void {
     const t = this.now();
-    const rec = { hash, created_at: t, last_seen_at: t };
-    this.tokens.set(hash, rec);
-    this.persist?.put(hash, rec);
+    this.q.insToken.run(hash, t, t);
   }
 
-  /** Look up a token hash and confirm it with a constant-time compare. */
+  /** Live (not revoked) token by hash, confirmed with a constant-time compare. */
   findToken(hash: string): TokenRecord | null {
-    // The map key is itself an HMAC, so lookup timing leaks nothing useful; the explicit
-    // constant-time compare is belt and braces.
-    const rec = this.tokens.get(hash);
-    if (!rec || !digestEqual(rec.hash, hash)) return null;
-    return rec;
+    const rec = this.q.getToken.get(hash) as TokenRecord | undefined;
+    if (!rec || rec.revoked_at !== null || !digestEqual(rec.hash, hash)) return null;
+    return { ...rec };
   }
 
   touchToken(hash: string): void {
-    const rec = this.tokens.get(hash);
-    if (rec) rec.last_seen_at = this.now();
+    this.q.touch.run(this.now(), hash);
+  }
+
+  markPaired(hash: string): void {
+    this.q.markPaired.run(this.now(), hash);
   }
 
   revokeToken(hash: string): void {
-    this.tokens.delete(hash);
-    this.states.delete(hash);
-    for (const [k, p] of this.pairings) if (p.token_hash === hash) this.pairings.delete(k);
-    this.persist?.delete(hash);
+    this.tx(() => {
+      this.q.revoke.run(this.now(), hash);
+      this.q.delStatesTok.run(hash);
+      this.q.delPairTok.run(hash);
+    });
   }
 
   addPairing(codeHash: string, p: Pairing): void {
-    this.pairings.set(codeHash, p);
+    this.q.insPair.run(codeHash, p.token_hash, p.sealed ? JSON.stringify(p.sealed) : null, p.expires_at);
   }
 
-  putState(tokenHash: string, s: StoredState, maxAgents: number, maxSessions: number): void {
+  getPairing(codeHash: string): Pairing | null {
+    const r = this.q.getPair.get(codeHash) as
+      | { token_hash: string; sealed: string | null; expires_at: number; used_at: number | null }
+      | undefined;
+    if (!r) return null;
+    return { token_hash: r.token_hash, sealed: r.sealed ? (JSON.parse(r.sealed) as Sealed) : null, expires_at: r.expires_at, used_at: r.used_at };
+  }
+
+  /** Atomically mark a pairing used and drop its ciphertext. False if it was already used. */
+  redeemPairing(codeHash: string): boolean {
+    return Number(this.q.usePair.run(this.now(), codeHash).changes) === 1;
+  }
+
+  deletePairing(codeHash: string): void {
+    this.q.delPair.run(codeHash);
+  }
+
+  /** Store the last-known state for (token, agent, session). Returns its event sequence number. */
+  putState(tokenHash: string, s: StoredState, maxAgents: number, maxSessions: number): number {
     const t = this.now();
-    let agents = this.states.get(tokenHash);
-    if (!agents) this.states.set(tokenHash, (agents = new Map()));
-    let sessions = agents.get(s.agent_id);
-    if (!sessions) {
-      if (agents.size >= maxAgents) evictOldest(agents, (m) => newest(m));
-      agents.set(s.agent_id, (sessions = new Map()));
-    }
-    sessions.delete(s.session); // keep insertion order == recency
-    if (sessions.size >= maxSessions) {
-      const oldest = sessions.keys().next().value;
-      if (oldest !== undefined) sessions.delete(oldest);
-    }
-    sessions.set(s.session, { state: s, updated_at: t });
-  }
-
-  /** Last-known (agent, session) states for a token, oldest first. */
-  snapshot(tokenHash: string): StoredState[] {
-    const out: SessionEntry[] = [];
-    for (const sessions of this.states.get(tokenHash)?.values() ?? []) out.push(...sessions.values());
-    return out.sort((a, b) => a.updated_at - b.updated_at).map((e) => e.state);
-  }
-
-  /** Expire pairing codes and drop agents silent for longer than stateTtlMs. */
-  sweep(stateTtlMs: number): void {
-    const t = this.now();
-    for (const [k, p] of this.pairings) if (p.expires_at <= t) this.pairings.delete(k);
-    for (const [tok, agents] of this.states) {
-      for (const [agent, sessions] of agents) {
-        for (const [sid, e] of sessions) if (t - e.updated_at > stateTtlMs) sessions.delete(sid);
-        if (sessions.size === 0) agents.delete(agent);
+    return this.tx(() => {
+      if (!this.q.hasAgent.get(tokenHash, s.agent_id)) {
+        const n = (this.q.agentCount.get(tokenHash) as { n: number }).n;
+        if (n >= maxAgents) {
+          const old = this.q.oldestAgent.get(tokenHash) as { agent_id: string } | undefined;
+          if (old) this.q.delAgent.run(tokenHash, old.agent_id);
+        }
+      } else if (!this.q.hasSession.get(tokenHash, s.agent_id, s.session)) {
+        const n = (this.q.sessionCount.get(tokenHash, s.agent_id) as { n: number }).n;
+        if (n >= maxSessions) {
+          const old = this.q.oldestSession.get(tokenHash, s.agent_id) as { session: string } | undefined;
+          if (old) this.q.delSession.run(tokenHash, s.agent_id, old.session);
+        }
       }
-      if (agents.size === 0) this.states.delete(tok);
+      const seq = ++this.seq;
+      this.q.upState.run(tokenHash, s.agent_id, s.session, JSON.stringify(s), t, seq);
+      this.q.setMeta.run("seq", String(seq));
+      return seq;
+    });
+  }
+
+  /** Last-known (agent, session) states for a token with seq > afterSeq, oldest first. */
+  snapshot(tokenHash: string, afterSeq = 0): SeqState[] {
+    return (this.q.snapshot.all(tokenHash, afterSeq) as Array<{ seq: number; state_json: string }>).map((r) => ({
+      seq: r.seq,
+      state: JSON.parse(r.state_json) as StoredState,
+    }));
+  }
+
+  /** Highest event sequence number handed out so far. */
+  currentSeq(): number {
+    return this.seq;
+  }
+
+  /** Expire pairing codes, drop states silent for longer than stateTtlMs, retire dead tokens. */
+  sweep(stateTtlMs: number, unpairedGraceMs = 60 * 60_000): { pairings: number; states: number; tokens: number } {
+    const t = this.now();
+    return this.tx(() => {
+      const pairings = Number(this.q.sweepPairs.run(t).changes);
+      const states = Number(this.q.sweepStates.run(t - stateTtlMs).changes);
+      const retired = Number(this.q.sweepUnpaired.run(t, t - unpairedGraceMs).changes);
+      const purged = Number(this.q.purgeRevoked.run(t - REVOKED_RETENTION_MS).changes);
+      return { pairings, states, tokens: retired + purged };
+    });
+  }
+
+  /** Cheap liveness check for /health. */
+  ping(): boolean {
+    try {
+      return (this.q.ping.get() as { ok: number }).ok === 1;
+    } catch {
+      return false;
     }
   }
 
-  /** Serialisable view of everything held (used by tests to prove no raw token is stored). */
-  dump(): unknown {
-    return {
-      tokens: Object.fromEntries(this.tokens),
-      pairings: Object.fromEntries(this.pairings),
-      states: Object.fromEntries(
-        [...this.states].map(([k, a]) => [k, Object.fromEntries([...a].map(([ak, s]) => [ak, Object.fromEntries(s)]))]),
-      ),
-    };
+  /** Token hashes of live tokens (tests and diagnostics). */
+  liveTokenHashes(): string[] {
+    return (this.db.prepare("SELECT hash FROM tokens WHERE revoked_at IS NULL ORDER BY created_at").all() as Array<{ hash: string }>).map(
+      (r) => r.hash,
+    );
+  }
+
+  /** Every row of every table (used by tests to prove no raw token/code/message is stored). */
+  dump(): Record<string, unknown[]> {
+    const out: Record<string, unknown[]> = {};
+    for (const t of ["tokens", "pairings", "states", "meta"]) out[t] = this.db.prepare(`SELECT * FROM ${t}`).all();
+    return out;
   }
 
   close(): void {
-    this.persist?.close();
-  }
-}
-
-function newest(m: Map<string, SessionEntry>): number {
-  let n = 0;
-  for (const e of m.values()) n = Math.max(n, e.updated_at);
-  return n;
-}
-
-function evictOldest<V>(m: Map<string, V>, age: (v: V) => number): void {
-  let key: string | null = null;
-  let min = Infinity;
-  for (const [k, v] of m) {
-    const a = age(v);
-    if (a < min) {
-      min = a;
-      key = k;
+    if (!this.db.isOpen) return;
+    try {
+      if (this.path !== ":memory:") this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    } finally {
+      this.db.close();
     }
   }
-  if (key !== null) m.delete(key);
-}
 
-/** Optional SQLite persistence (DESKPET_DB). Stores token hashes + timestamps only. */
-export async function openSqlite(path: string): Promise<TokenPersistence> {
-  const { DatabaseSync } = await import("node:sqlite");
-  const db = new DatabaseSync(path);
-  db.exec(
-    "CREATE TABLE IF NOT EXISTS tokens (hash TEXT PRIMARY KEY, created_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL)",
-  );
-  const put = db.prepare(
-    "INSERT INTO tokens (hash, created_at, last_seen_at) VALUES (?, ?, ?) ON CONFLICT(hash) DO UPDATE SET last_seen_at = excluded.last_seen_at",
-  );
-  const del = db.prepare("DELETE FROM tokens WHERE hash = ?");
-  return {
-    load() {
-      const rows = db.prepare("SELECT hash, created_at, last_seen_at FROM tokens").all() as Array<{
-        hash: string;
-        created_at: number;
-        last_seen_at: number;
-      }>;
-      return rows.map((r) => [r.hash, { hash: r.hash, created_at: r.created_at, last_seen_at: r.last_seen_at }] as [string, TokenRecord]);
-    },
-    put(hash, rec) {
-      put.run(hash, rec.created_at, rec.last_seen_at);
-    },
-    delete(hash) {
-      del.run(hash);
-    },
-    close() {
-      db.close();
-    },
-  };
+  private tx<T>(fn: () => T): T {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const r = fn();
+      this.db.exec("COMMIT");
+      return r;
+    } catch (e) {
+      if (this.db.isTransaction) this.db.exec("ROLLBACK");
+      throw e;
+    }
+  }
 }

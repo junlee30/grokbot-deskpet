@@ -1,25 +1,45 @@
 import { loadConfig, type RelayConfig } from "../src/config.ts";
 import { createRelay, type Relay } from "../src/server.ts";
-import type { TokenPersistence } from "../src/store.ts";
+import { Store } from "../src/store.ts";
+
+export interface Clock {
+  t: number;
+  advance(ms: number): void;
+}
 
 export interface Harness {
   relay: Relay;
   base: string;
-  clock: { t: number; advance(ms: number): void };
+  clock: Clock;
+  /** Every JSON log line the relay wrote. */
+  logs: string[];
   close(): Promise<void>;
 }
 
-export async function startRelay(over: Partial<RelayConfig> = {}, persistence: TokenPersistence | null = null): Promise<Harness> {
-  const clock = {
+export function newClock(): Clock {
+  return {
     t: Date.parse("2026-01-01T00:00:00Z"),
     advance(ms: number) {
       this.t += ms;
     },
   };
-  const cfg = loadConfig({}, { log: false, now: () => clock.t, ...over });
-  const relay = createRelay(cfg, persistence);
+}
+
+/** Start a relay on a random port. `dbPath` defaults to an in-memory database. */
+export async function startRelay(
+  over: Partial<RelayConfig> = {},
+  opts: { dbPath?: string; clock?: Clock; env?: NodeJS.ProcessEnv } = {},
+): Promise<Harness> {
+  const clock = opts.clock ?? newClock();
+  const logs: string[] = [];
+  const cfg = loadConfig(
+    { DESKPET_DB: ":memory:", ...opts.env },
+    { log: true, logger: (l) => logs.push(l), now: () => clock.t, ...over },
+  );
+  const store = Store.open(opts.dbPath ?? ":memory:", cfg.now);
+  const relay = createRelay(cfg, store);
   const port = await relay.listen(0, "127.0.0.1");
-  return { relay, base: `http://127.0.0.1:${port}`, clock, close: () => relay.close() };
+  return { relay, base: `http://127.0.0.1:${port}`, clock, logs, close: () => relay.close() };
 }
 
 export async function pairStart(base: string): Promise<{ code: string; token: string; expires_at: string }> {
@@ -53,20 +73,24 @@ export function postEvent(base: string, token: string | null, body: unknown, hea
 export interface SseEvent {
   event: string;
   data: any;
+  id?: string;
 }
 
 export interface SseClient {
   status: number;
+  /** "retry:" value seen on the stream, if any. */
+  retry: number | null;
   events: SseEvent[];
   waitFor(pred: (e: SseEvent) => boolean, ms?: number): Promise<SseEvent>;
   close(): void;
 }
 
 /** Minimal SSE client over fetch so we can send the Authorization header. */
-export async function openStream(base: string, token: string): Promise<SseClient> {
+export async function openStream(base: string, token: string, headers: Record<string, string> = {}): Promise<SseClient> {
   const ac = new AbortController();
-  const r = await fetch(`${base}/v1/stream`, { headers: { authorization: `Bearer ${token}` }, signal: ac.signal });
+  const r = await fetch(`${base}/v1/stream`, { headers: { authorization: `Bearer ${token}`, ...headers }, signal: ac.signal });
   const events: SseEvent[] = [];
+  const meta = { retry: null as number | null };
   const waiters: Array<() => void> = [];
   if (r.ok && r.body) {
     (async () => {
@@ -82,13 +106,16 @@ export async function openStream(base: string, token: string): Promise<SseClient
             const block = buf.slice(0, i);
             buf = buf.slice(i + 2);
             let event = "message";
+            let id: string | undefined;
             const data: string[] = [];
             for (const line of block.split("\n")) {
               if (line.startsWith("event: ")) event = line.slice(7);
               else if (line.startsWith("data: ")) data.push(line.slice(6));
+              else if (line.startsWith("id: ")) id = line.slice(4);
+              else if (line.startsWith("retry: ")) meta.retry = Number(line.slice(7));
             }
             if (data.length) {
-              events.push({ event, data: JSON.parse(data.join("\n")) });
+              events.push({ event, data: JSON.parse(data.join("\n")), ...(id ? { id } : {}) });
               waiters.splice(0).forEach((w) => w());
             }
           }
@@ -104,6 +131,9 @@ export async function openStream(base: string, token: string): Promise<SseClient
   }
   return {
     status: r.status,
+    get retry() {
+      return meta.retry;
+    },
     events,
     waitFor(pred, ms = 2000) {
       return new Promise((resolve, reject) => {

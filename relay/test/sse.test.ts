@@ -104,20 +104,20 @@ describe("SSE stream", () => {
     try {
       const { token } = await pairStart(h.base);
       await postEvent(h.base, token, goodEvent());
-      const key = [...h.relay.store.tokens.keys()][0]!;
+      const key = h.relay.store.liveTokenHashes()[0]!;
       h.clock.advance(23 * 3_600_000);
-      h.relay.store.sweep(h.relay.config.stateTtlMs);
+      h.relay.sweep();
       assert.equal(h.relay.store.snapshot(key).length, 1);
       h.clock.advance(2 * 3_600_000);
-      h.relay.store.sweep(h.relay.config.stateTtlMs);
+      h.relay.sweep();
       assert.equal(h.relay.store.snapshot(key).length, 0);
     } finally {
       await h.close();
     }
   });
 
-  it("allows CORS from the desktop dev origin only", async () => {
-    const h = await startRelay();
+  it("allows CORS only from explicitly listed origins", async () => {
+    const h = await startRelay({ corsOrigins: ["http://localhost:1420"] });
     try {
       const ok = await fetch(`${h.base}/v1/pair/start`, { method: "OPTIONS", headers: { origin: "http://localhost:1420" } });
       assert.equal(ok.status, 204);

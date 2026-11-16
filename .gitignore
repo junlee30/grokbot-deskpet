@@ -7,3 +7,7 @@ dist/
 .deskpet-token
 .DS_Store
 *.log
+*.sqlite-wal
+*.sqlite-shm
+data/
+dev-pepper

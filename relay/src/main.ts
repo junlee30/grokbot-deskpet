@@ -1,25 +1,54 @@
-import { loadConfig } from "./config.ts";
-import { createRelay } from "./server.ts";
-import { openSqlite } from "./store.ts";
+import { ConfigError, loadConfig, type RelayConfig } from "./config.ts";
+import { log } from "./log.ts";
+import { createRelay, VERSION } from "./server.ts";
+import { Store } from "./store.ts";
 
-const config = loadConfig();
-const persistence = config.dbPath ? await openSqlite(config.dbPath) : null;
-const relay = createRelay(config, persistence);
+let config: RelayConfig;
+try {
+  config = loadConfig();
+} catch (e) {
+  // Fail closed with a clear message. ConfigError messages never contain secret values.
+  const msg = e instanceof ConfigError ? e.message : "invalid configuration";
+  process.stderr.write(JSON.stringify({ ts: new Date().toISOString(), level: "error", msg: "config", error: msg }) + "\n");
+  process.exit(78); // EX_CONFIG
+}
+
+let store: Store;
+try {
+  store = Store.open(config.dbPath, config.now);
+} catch (e) {
+  log(config, "error", "database open failed", { error: (e as Error)?.name ?? "Error" });
+  process.exit(1);
+}
+
+const relay = createRelay(config, store);
 const port = await relay.listen();
 
-console.log(`deskpet relay listening on http://${config.host}:${port}`);
-if (config.ephemeralPepper) {
-  console.log("DESKPET_PEPPER not set: using a random per-process pepper (tokens are invalid after restart).");
+log(config, "info", "listening", {
+  version: VERSION,
+  host: config.host,
+  port,
+  production: config.production,
+  db: config.dbPath === ":memory:" ? "memory" : "file",
+  pepper: config.pepperSource,
+  cors_origins: config.corsOrigins.length,
+  trust_proxy: config.trustProxy,
+});
+if (config.pepperSource === "ephemeral") {
+  log(config, "warn", "random per-process pepper: tokens stop working after a restart (set DESKPET_PEPPER or use a DESKPET_DB file)");
 }
-if (persistence) console.log("token hashes persisted to DESKPET_DB");
 
 let stopping = false;
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, () => {
     if (stopping) return;
     stopping = true;
-    console.log(`${sig}: shutting down`);
-    relay.close().then(() => process.exit(0));
-    setTimeout(() => process.exit(0), 2000).unref();
+    log(config, "info", "shutting down", { signal: sig });
+    const hard = setTimeout(() => process.exit(1), 5000);
+    hard.unref();
+    relay.close().then(
+      () => process.exit(0),
+      () => process.exit(1),
+    );
   });
 }

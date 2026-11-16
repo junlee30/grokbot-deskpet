@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { request } from "node:http";
 import { after, before, describe, it } from "node:test";
+import { VERSION } from "../src/server.ts";
 import { goodEvent, pairStart, postEvent, startRelay, type Harness } from "./helpers.ts";
 
 describe("auth", () => {
@@ -108,10 +109,10 @@ describe("schema", () => {
     const { agent_id: _a, agent_name: _n, ...rest } = goodEvent();
     const r = await postEvent(h.base, token, { ...rest, bot: "scout" });
     assert.equal(r.status, 202);
-    const snap = h.relay.store.snapshot([...h.relay.store.tokens.keys()][0]!);
-    const scout = snap.find((s) => s.agent_id === "scout");
+    const snap = h.relay.store.snapshot(h.relay.store.liveTokenHashes()[0]!);
+    const scout = snap.find((s) => s.state.agent_id === "scout");
     assert.ok(scout);
-    assert.equal(scout.agent_name, "scout");
+    assert.equal(scout.state.agent_name, "scout");
   });
 
   it("415 on non-JSON content type", async () => {
@@ -124,10 +125,14 @@ describe("schema", () => {
     assert.equal((await fetch(`${h.base}/v1/events`)).status, 405);
   });
 
-  it("health", async () => {
+  it("health checks the database; livez is trivial", async () => {
     const r = await fetch(`${h.base}/health`);
     assert.equal(r.status, 200);
-    assert.equal(((await r.json()) as { ok: boolean }).ok, true);
+    const j = (await r.json()) as { ok: boolean; version: string; db: string };
+    assert.deepEqual(j, { ok: true, version: VERSION, db: "ok" });
+    const l = await fetch(`${h.base}/livez`);
+    assert.equal(l.status, 200);
+    assert.deepEqual(await l.json(), { ok: true });
   });
 });
 

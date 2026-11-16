@@ -1,8 +1,13 @@
-# NOT deployed. Requires Jun's explicit approval. Never share secrets with jarvis-scheduler.
+# NOT DEPLOYED. Deploying requires Jun's explicit approval.
 #
-# Config for a FUTURE, separate Fly app. Nothing in this repo runs `fly`.
-# Before any deploy (with approval): set DESKPET_PEPPER and DESKPET_PUBLIC_URL as Fly
-# secrets for THIS app only; do not reuse secrets from any other app.
+# A future, standalone Fly app for the Desk Pet relay, separate from jarvis-scheduler: its own
+# app, its own volume, its own secrets. Never copy or share secrets with any other app.
+# Nothing in this repo runs `fly`. The exact, reviewed command list is in .runs/m1-deploy-plan.md.
+#
+# Single machine only, because state lives in SQLite on one volume:
+#   fly deploy --app grokbot-deskpet-relay --ha=false        (run from relay/)
+# Secrets (set by Jun, value generated inline, never displayed):
+#   DESKPET_PEPPER (>= 32 chars; the relay refuses to start in production without it)
 app = "grokbot-deskpet-relay"
 primary_region = "sjc"
 
@@ -10,15 +15,29 @@ primary_region = "sjc"
   dockerfile = "Dockerfile"
 
 [env]
+  NODE_ENV = "production"
   HOST = "0.0.0.0"
   PORT = "8787"
+  DESKPET_DB = "/data/deskpet.sqlite"
+  DESKPET_PUBLIC_URL = "https://grokbot-deskpet-relay.fly.dev"
+  # Fly's proxy sets Fly-Client-IP; trust it for per-IP pairing limits.
+  DESKPET_TRUST_PROXY = "1"
+  # CORS stays OFF in production (DESKPET_CORS_ORIGINS unset): the desktop app talks to the
+  # relay from Rust, not from the webview.
+
+[mounts]
+  source = "deskpet_data"
+  destination = "/data"
 
 [http_service]
   internal_port = 8787
   force_https = true
-  auto_stop_machines = "off"
+  # Machines stop when idle and start on the next request. Note: an open SSE stream from a
+  # running desktop pet counts as traffic, so in practice the machine stays awake while any
+  # pet is connected.
+  auto_stop_machines = "stop"
   auto_start_machines = true
-  min_machines_running = 1
+  min_machines_running = 0
 
   [http_service.concurrency]
     type = "connections"
@@ -26,7 +45,7 @@ primary_region = "sjc"
     hard_limit = 250
 
   [[http_service.checks]]
-    grace_period = "5s"
+    grace_period = "10s"
     interval = "30s"
     method = "GET"
     path = "/health"

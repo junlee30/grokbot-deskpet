@@ -1,4 +1,7 @@
 node_modules
-test
+data
 *.sqlite
+*.sqlite-*
+dev-pepper
 .deskpet-token
+fly.toml
