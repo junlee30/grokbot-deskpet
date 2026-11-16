@@ -5,6 +5,7 @@ import { Pet } from "./pets.ts";
 import { copyText, inTauri, openExternal, quitApp, startWindowDrag } from "./platform.ts";
 import type { ConnStatus, ReadyEvent, StateEvent, StreamHandlers } from "./relay.ts";
 import { SpriteBank } from "./sprites.ts";
+import { AvatarBank } from "./avatar-bank.ts";
 import { TauriTransport, WebTransport, type RelayTransport } from "./transport.ts";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -39,7 +40,7 @@ app.innerHTML = `
     <label>Relay URL <input id="s-relay" spellcheck="false" autocomplete="off" /></label>
     <div class="presets">
       <button type="button" class="chip" id="s-local">Local</button>
-      <button type="button" class="chip" id="s-hosted" title="${HOSTED_RELAY}">Hosted (not deployed yet)</button>
+      <button type="button" class="chip" id="s-hosted" title="${HOSTED_RELAY}">Hosted</button>
       <span class="small" id="s-relay-note">Changing relay means pairing again.</span>
     </div>
     <label>Click opens <input id="s-default" spellcheck="false" /></label>
@@ -61,6 +62,7 @@ const statusEl = $<HTMLDivElement>("status");
 
 let cfg: DeskPetConfig;
 const bank = new SpriteBank();
+const art = new AvatarBank(); // Grok Bot avatar art, if it was imported at build time
 const pets = new Map<string, Pet>();
 let transport: RelayTransport;
 let conn: ConnStatus = "connecting";
@@ -190,7 +192,7 @@ function handleState(e: StateEvent): void {
   markPaired();
   let pet = pets.get(e.agent_id);
   if (!pet) {
-    pet = new Pet(e.agent_id, e.agent_name || e.agent_id, cfg);
+    pet = new Pet(e.agent_id, e.agent_name || e.agent_id, cfg, art);
     pets.set(e.agent_id, pet);
     stage.append(pet.el);
     stage.append(pet.bubble);
@@ -356,7 +358,7 @@ async function boot(): Promise<void> {
   transport = makeTransport(cfg.relayUrl, legacy);
   if (legacy && transport instanceof TauriTransport) await transport.importToken(legacy).catch(() => {});
   try {
-    await bank.load();
+    await Promise.all([bank.load(), art.load()]);
   } catch {
     statusEl.textContent = "sprites failed to load";
   }

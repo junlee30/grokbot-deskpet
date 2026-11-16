@@ -3,6 +3,8 @@ import type { DeskPetConfig } from "./config.ts";
 import { layoutToast, toastMaxWidth, type Slot } from "./layout.ts";
 import type { PetState, StateEvent } from "./relay.ts";
 import { accentFor, type AnimState, type SpriteBank } from "./sprites.ts";
+import { accentHex, AVATAR_DONE_MS, avatarCue, avatarGeometry, colorHex, FacePlayer, parseAvatar, type Avatar } from "./avatar.ts";
+import { drawAvatar, type AvatarBank } from "./avatar-bank.ts";
 
 /** Highest priority first. */
 export const PRIORITY: PetState[] = ["needs_you", "error", "juggling", "working", "thinking", "done", "idle", "sleeping"];
@@ -27,7 +29,13 @@ export function effectiveState(sessions: Iterable<Session>, now: number, staleAc
 export class Pet {
   readonly id: string;
   name: string;
-  readonly accent: string;
+  accent: string;
+  /** Latest Grok Bot profile avatar the relay told us about (null: robot art). */
+  avatar: Avatar | null = null;
+  private readonly face = new FacePlayer();
+  private readonly art: AvatarBank | null;
+  private readonly accentOverride: string | undefined;
+  private mode: "robot" | "avatar" = "robot";
   readonly sessions = new Map<string, Session>();
   lastActivity = 0;
   private doneSeq = 0;
@@ -43,9 +51,12 @@ export class Pet {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly label: HTMLDivElement;
 
-  constructor(id: string, name: string, cfg: DeskPetConfig) {
+  constructor(id: string, name: string, cfg: DeskPetConfig, art: AvatarBank | null = null) {
     this.id = id;
     this.name = name;
+    this.art = art;
+    const o = cfg.accents[id];
+    this.accentOverride = o && /^#[0-9a-fA-F]{6}$/.test(o) ? o : undefined;
     this.accent = accentFor(id, cfg.accents);
     this.el = document.createElement("div");
     this.el.className = "pet";
@@ -106,7 +117,22 @@ export class Pet {
     this.bubble.remove();
   }
 
+  /** Adopt a (validated) avatar: its colour becomes the pet's accent unless the user set one. */
+  setAvatar(av: Avatar | null): void {
+    if (!av || (this.avatar && this.avatar.shape === av.shape && this.avatar.color === av.color)) return;
+    this.avatar = av;
+    this.el.dataset.avatar = `${av.shape}/${av.color}`;
+    const accent = this.accentOverride ?? accentHex(av.color, this.art?.palette ?? null);
+    if (accent !== this.accent) {
+      this.accent = accent;
+      this.el.style.setProperty("--accent", accent);
+      this.bubble.style.setProperty("--accent", accent);
+    }
+  }
+
   update(e: StateEvent, now: number, toastMs = 5000): void {
+    // An event without an avatar keeps the one we have (the relay re-sends the latest anyway).
+    this.setAvatar(parseAvatar(e.avatar));
     if (e.agent_name && e.agent_name !== this.name) {
       this.name = e.agent_name;
       this.label.textContent = e.agent_name;
@@ -147,10 +173,50 @@ export class Pet {
     return s;
   }
 
+  /** Canvas backing size: 32 for the robot, the avatar geometry's size for avatars. */
+  private setMode(mode: "robot" | "avatar", backing: number): void {
+    this.mode = mode;
+    this.el.dataset.art = mode;
+    if (this.canvas.width !== backing || this.canvas.height !== backing) {
+      this.canvas.width = backing;
+      this.canvas.height = backing;
+      this.ctx.imageSmoothingEnabled = false;
+    }
+  }
+
+  /** Draw the Grok Bot avatar. False when its art isn't available (caller draws the robot). */
+  private drawAvatarFrame(want: AnimState, now: number): boolean {
+    const av = this.avatar;
+    const art = this.art;
+    const slot = this.slot;
+    if (!av || !art || !slot || !art.has(av.shape)) return false;
+    const sizes = art.manifest?.shapes[av.shape];
+    const g = avatarGeometry(slot.spriteSize, sizes?.["2x"]?.frameSize ?? 36, sizes?.["1x"]?.frameSize ?? 18);
+    const strip = art.strip(av.shape, g.res, colorHex(av.color, art.palette));
+    if (strip === null) return false;
+    this.setMode("avatar", g.backing);
+    if (strip === "pending") {
+      this.ctx.clearRect(0, 0, g.backing, g.backing);
+      return true;
+    }
+    const t = now - this.anim.start;
+    if (want === "done" && t >= AVATAR_DONE_MS) this.playedDoneSeq = this.doneSeq;
+    const cue = avatarCue(want, t, g);
+    drawAvatar(this.ctx, strip, g, this.face.frameAt(cue.face, now), cue);
+    return true;
+  }
+
+  get artMode(): "robot" | "avatar" {
+    return this.mode;
+  }
+
   draw(bank: SpriteBank, now: number, cfg: DeskPetConfig, offline: boolean): void {
     if (!this.slot) return;
     const want = this.renderState(now, cfg, offline);
     if (want !== this.anim.state) this.anim = { state: want, start: now };
+    this.el.dataset.state = want;
+    if (this.drawAvatarFrame(want, now)) return;
+    this.setMode("robot", 32);
     const def = bank.defs[want];
     if (!def) return;
     let frame = Math.floor(((now - this.anim.start) * def.fps) / 1000);
@@ -160,7 +226,6 @@ export class Pet {
       if (want === "done") this.playedDoneSeq = this.doneSeq;
     }
     const sheet = bank.sheet(want, this.accent);
-    this.el.dataset.state = want;
     this.ctx.clearRect(0, 0, 32, 32);
     if (sheet) this.ctx.drawImage(sheet, frame * bank.fw, 0, bank.fw, bank.fh, 0, 0, bank.fw, bank.fh);
   }

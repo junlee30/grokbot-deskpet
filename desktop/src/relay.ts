@@ -16,6 +16,8 @@ export interface StateEvent {
   message?: string;
   ts: string;
   received_at: string;
+  /** Grok Bot profile avatar names (relay >= 0.3.0); validated again by parseAvatar. */
+  avatar?: { shape: string; color: string };
 }
 
 export interface PairStart {
