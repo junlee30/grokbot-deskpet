@@ -68,6 +68,7 @@ desktop/    Tauri v2 app; frontend is Vite + TypeScript, no framework
   src-tauri/src/window_state.rs  window position memory
   src/avatar.ts           avatar logic: strip tinting, face cadence, state cues, geometry (pure, tested)
   src/avatar-bank.ts      loads public/grokbot-art/ (gitignored, imported) and draws avatars
+  src/presence.ts         what the pet bubble shows: toast vs persistent working label (pure, tested)
 skill/SKILL.md            draft Grok Bot skill: pairing + when/how to post status (+ avatar)
 scripts/import-grokbot-art.mjs  copies Grok Bot avatar art + palette from the installed app
 scripts/demo.sh           fake bots (Jarvis, Claude, Scout) cycling through states
@@ -230,7 +231,7 @@ Tests:
 ```bash
 cd relay && npm test           # tsc + node:test: auth, schema, limits, pairing, persistence, migrations,
                                #   SSE ids/resume, health, CORS, logs, config
-cd desktop && npm test         # node:test: toast/pet layout, relay URL validation, backoff
+cd desktop && npm test         # node:test: toast/pet layout, relay URL validation, backoff, avatar states, working label
 cd desktop && npm run build    # tsc + vite build
 cd desktop/src-tauri && cargo test   # SSE parser, backoff, URL validation, keychain naming, window clamp
 ```
@@ -259,11 +260,20 @@ for app icons).
   for light ones) so it reads on any desktop. Rendering is nearest-neighbour at an integer
   scale: Large draws the @2x strip on a 48 px canvas at 2 CSS px per pixel, Small at 1, tiny
   columns use the @1x strip. Idle uses the app's own face cadence (blink every 2.8–5.5 s,
-  sometimes double, or a glance left/right/up). States: thinking looks up with thought dots;
-  working hops with a spinner badge and eyes sweeping; juggling orbits three balls; needs_you
-  bounces with a blinking `!` badge; error shakes with a red `×`; done hops with sparkles and a
-  `✓` (once); sleeping closes its eyes with rising z's; offline dims. Without the imported art
-  (or for bots without an avatar) the robot below is used, with the avatar colour as accent.
+  sometimes double, or a glance left/right/up). States (M3, `avatarCue` in `src/avatar.ts`):
+  - **working**: a squash-and-stretch hop (about 10 CSS px at Large), a tilted ring orbiting the
+    waist with a bright comet spinning round it, eyes sweeping;
+  - **thinking**: still, leaning back, eyes up, a thought cloud with dots filling in;
+  - **juggling**: three balls in a high arc over the head, body swaying;
+  - **needs_you**: two hops then an impatient wiggle, a `!` badge that pulses (never vanishes);
+  - **error**: deflated (squashed flat), squinting, shudders now and then, red `×`;
+  - **done** (once, 1.8 s): crouch, big leap with a confetti burst and `✓`, a little hop, then
+    it settles and goes back to idle;
+  - **sleeping**: eyes closed, rising z's; **offline**: dimmed.
+
+  Squash/stretch and lean drop or repeat whole pixel rows/columns and are drawn as a few 1:1
+  copies (`warpPlan`), so the art stays pixel-crisp. Without the imported art (or for bots
+  without an avatar) the robot below is used, with the avatar colour as accent.
 - One pet per `agent_id`, each in its own column, name under it, accent colour per bot (Jarvis
   teal, Claude orange, Scout violet, others hashed into a fixed palette). Frames are 32×32 at
   integer 3×, 2× or 1×, whichever fits; ⚙ **Pet size** caps it at Large (3×) or Small (2×).
@@ -274,6 +284,11 @@ for app icons).
   never overlap each other or clip at the edge. Text is at most 2 lines with an ellipsis (full
   text in the tooltip). The layout is a pure function in `src/layout.ts`, unit-tested for 1–16
   pets.
+- **Working label** (M3): while a pet shows `working` (or `juggling`), the latest message of
+  that state stays above it as a small label with a spinning ring ("Reading the build log"),
+  cut to 48 characters and at most 2 lines (full text in the tooltip), until the state ends. A
+  fresh toast with different text shows on top for its 5 s, then the label returns. The logic
+  is in `src/presence.ts` (pure, unit-tested).
 - Multiple sessions per bot: the highest-priority state wins:
   `needs_you > error > juggling > working > thinking > done > idle`. Active states with no
   update for 10 min count as idle (bots send heartbeats every 60 s in long turns).
