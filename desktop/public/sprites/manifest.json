@@ -12,7 +12,7 @@
       "file": "grokbot_idle.png",
       "accent": "grokbot_idle_accent.png",
       "frames": 4,
-      "fps": 3,
+      "fps": 4,
       "loop": true,
       "playOnce": false
     },
@@ -20,7 +20,7 @@
       "file": "grokbot_thinking.png",
       "accent": "grokbot_thinking_accent.png",
       "frames": 6,
-      "fps": 8,
+      "fps": 5,
       "loop": true,
       "playOnce": false
     },
@@ -61,7 +61,7 @@
       "file": "grokbot_error.png",
       "accent": "grokbot_error_accent.png",
       "frames": 6,
-      "fps": 12,
+      "fps": 10,
       "loop": true,
       "playOnce": false
     },
