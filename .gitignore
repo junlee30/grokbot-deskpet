@@ -11,3 +11,6 @@ dist/
 *.sqlite-shm
 data/
 dev-pepper
+# Grok Bot art + palette copied from the installed app at build time (scripts/import-grokbot-art.mjs).
+# Not ours: never commit.
+desktop/public/grokbot-art/
