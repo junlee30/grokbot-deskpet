@@ -15,16 +15,25 @@ Every call has a 3-second timeout and ignores failures.
 ## 1. Pairing (once)
 
 Trigger: the user says something like
-`Install the Desk Pet skill and pair with code K7Q-42M`.
+`Install the Desk Pet skill and pair with code K7Q-42M`, optionally followed by
+`using relay <url>` (the desktop app adds this when it is not on the hosted relay).
 
 1. Take the code (format `XXX-XXX`, letters and digits; case and a missing dash are fine).
 2. Pick a stable `agent_id` for yourself: lowercase `[a-z0-9_-]`, max 64 characters, e.g.
    `jarvis`. Use your display name as `agent_name` (max 64), e.g. `Jarvis`.
-3. Exchange the code. The relay URL is the one the user gave you, or the default for their
-   setup. During local development it is `http://127.0.0.1:8787`.
+3. Pick the relay URL, first match wins:
+   1. the `using relay <url>` part of the user's message, if present;
+   2. the `DESK_PET_RELAY_URL` environment variable, if set;
+   3. the hosted relay `https://grokbot-deskpet-relay.fly.dev`.
+
+   **The hosted relay is not live yet.** It only works once Jun deploys it. Until then,
+   pairing against it fails (connection error or 404). Say so plainly and carry on with your
+   work. For local development the relay is `http://127.0.0.1:8787`.
+
+   Only use `https://` URLs, or `http://` for `localhost`/`127.0.0.1`. Exchange the code:
 
    ```bash
-   RELAY="https://<relay-host>"   # the Desk Pet relay URL
+   RELAY="${DESK_PET_RELAY_URL:-https://grokbot-deskpet-relay.fly.dev}"   # or the URL the user gave
    RESP="$(curl -sS -m 5 -X POST "$RELAY/v1/pair" \
      -H 'Content-Type: application/json' \
      -d '{"code":"K7Q-42M","agent_id":"jarvis","agent_name":"Jarvis"}')"
@@ -32,13 +41,18 @@ Trigger: the user says something like
 
    Success is HTTP 200 with `{"token": "...", "relay_url": "...", "agent_id": "..."}`.
    Errors: `400` malformed code, `404` unknown code, `410` code already used or expired
-   (codes are single use and expire after 15 minutes), `429` slow down.
+   (codes are single use and expire after 15 minutes), `429` slow down (too many attempts,
+   including a short global lock after many failed codes; wait a minute, don't loop).
 4. Save the result as **secrets**, without printing them:
    - `DESK_PET_TOKEN` = `token`
-   - `DESK_PET_RELAY_URL` = `relay_url`
+   - `DESK_PET_RELAY_URL` = `relay_url` from the response. It is the relay's canonical public
+     URL (for the hosted relay, `https://grokbot-deskpet-relay.fly.dev`). Use it for every
+     later call instead of the URL you paired with.
 
    Use your platform's secret / environment-variable store. Do not write the token into
-   files in the user's repository, into memory notes, or into chat.
+   files in the user's repository, into memory notes, or into chat. Parse the JSON without
+   echoing it (for example `jq -r .token <<<"$RESP"` captured straight into the secret store),
+   and `unset RESP` afterwards.
 5. Confirm to the user **without echoing the token**, e.g.
    "Paired with Desk Pet. I'll show up on your desktop as Jarvis." If pairing failed, say
    so plainly (for example "that code expired, please click Connect again for a new one").
@@ -116,7 +130,7 @@ Only put a short, generic status there, e.g. `Running tests`, `Waiting for your 
 
 When in doubt, omit `message`.
 
-## 5. Unpairing and privacy
+## 5. Unpairing, re-pairing and privacy
 
 - The user can unpair from the desktop app (Settings, then Unpair). That revokes the token
   immediately and later posts get `401`. When you get `401`, stop posting, delete
@@ -124,6 +138,11 @@ When in doubt, omit `message`.
 - To unpair from your side (only if the user asks):
   `curl -sS -m 3 -X POST "$DESK_PET_RELAY_URL/v1/unpair" -H "Authorization: Bearer $DESK_PET_TOKEN" >/dev/null 2>&1 || true`,
   then delete both secrets.
-- The relay keeps only a hash of the token and the last state per bot/session (no message
-  bodies). Silent bots are forgotten after 24 hours.
+- If the user switches the desktop app to a different relay (for example from local to
+  hosted), the old token stops working there; they will give you a new code. Pair again and
+  replace both secrets.
+- The relay keeps only a keyed hash of the token and the last state per bot/session (no
+  message bodies), in a small database that survives relay restarts. Silent bots are
+  forgotten after 24 hours. The desktop app keeps its copy of the token in the macOS
+  Keychain.
 - Desk Pet is an unofficial side project, not an xAI product.

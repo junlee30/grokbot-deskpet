@@ -105,8 +105,10 @@ async function beginPairing(): Promise<void> {
   }
 }
 
+/** The bot defaults to the hosted relay; any other relay is named in the line. */
 function pasteLine(code: string): string {
-  return `Install the Desk Pet skill and pair with code ${code}`;
+  const via = cfg.relayUrl === HOSTED_RELAY ? "" : ` using relay ${cfg.relayUrl}`;
+  return `Install the Desk Pet skill and pair with code ${code}${via}`;
 }
 
 function pendingValid(): { code: string; expires_at: string } | null {
