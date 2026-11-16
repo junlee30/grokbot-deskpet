@@ -1,0 +1,11 @@
+{
+  "relayUrl": "http://127.0.0.1:8787",
+  "openUrls": {
+    "default": "https://grok.com",
+    "agents": {}
+  },
+  "accents": {},
+  "sleepAfterMs": 300000,
+  "staleActiveMs": 600000,
+  "toastMs": 5000
+}

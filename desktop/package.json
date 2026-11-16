@@ -1,0 +1,23 @@
+{
+  "name": "grokbot-deskpet-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desk Pet for Grok Bot (unofficial, working title) - desktop app frontend (Tauri v2 + Vite).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "sprites": "node art/build-sprites.mjs",
+    "tauri": "cargo tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-opener": "^2.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "vite": "^7.0.0"
+  }
+}

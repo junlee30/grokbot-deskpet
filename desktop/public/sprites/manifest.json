@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "frameWidth": 32,
+  "frameHeight": 32,
+  "scale": 3,
+  "accent": {
+    "mode": "layer",
+    "note": "Each state has a <file> base strip and an <accent> strip (white + alpha). The app tints the accent strip with the bot's colour and draws it over the base."
+  },
+  "states": {
+    "idle": {
+      "file": "grokbot_idle.png",
+      "accent": "grokbot_idle_accent.png",
+      "frames": 4,
+      "fps": 3,
+      "loop": true,
+      "playOnce": false
+    },
+    "thinking": {
+      "file": "grokbot_thinking.png",
+      "accent": "grokbot_thinking_accent.png",
+      "frames": 6,
+      "fps": 8,
+      "loop": true,
+      "playOnce": false
+    },
+    "working": {
+      "file": "grokbot_working.png",
+      "accent": "grokbot_working_accent.png",
+      "frames": 8,
+      "fps": 10,
+      "loop": true,
+      "playOnce": false
+    },
+    "juggling": {
+      "file": "grokbot_juggling.png",
+      "accent": "grokbot_juggling_accent.png",
+      "frames": 10,
+      "fps": 12,
+      "loop": true,
+      "playOnce": false
+    },
+    "needs_you": {
+      "file": "grokbot_needs_you.png",
+      "accent": "grokbot_needs_you_accent.png",
+      "frames": 6,
+      "fps": 8,
+      "loop": true,
+      "playOnce": false
+    },
+    "done": {
+      "file": "grokbot_done.png",
+      "accent": "grokbot_done_accent.png",
+      "frames": 8,
+      "fps": 10,
+      "loop": false,
+      "playOnce": true,
+      "then": "idle"
+    },
+    "error": {
+      "file": "grokbot_error.png",
+      "accent": "grokbot_error_accent.png",
+      "frames": 6,
+      "fps": 12,
+      "loop": true,
+      "playOnce": false
+    },
+    "sleeping": {
+      "file": "grokbot_sleeping.png",
+      "accent": "grokbot_sleeping_accent.png",
+      "frames": 4,
+      "fps": 2,
+      "loop": true,
+      "playOnce": false
+    },
+    "offline": {
+      "file": "grokbot_offline.png",
+      "accent": "grokbot_offline_accent.png",
+      "frames": 1,
+      "fps": 1,
+      "loop": true,
+      "playOnce": false
+    }
+  }
+}

@@ -1,0 +1,307 @@
+:root {
+  --ink: #f2f4f8;
+  --muted: #a9b1c1;
+  --glass: rgba(20, 22, 28, 0.86);
+  --edge: rgba(255, 255, 255, 0.14);
+  --teal: #2dd4bf;
+  font-family: ui-rounded, -apple-system, BlinkMacSystemFont, "SF Pro Rounded", system-ui, sans-serif;
+  font-size: 12px;
+  color: var(--ink);
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+/* In a normal browser tab (web prototype) give the transparent window a desk to sit on. */
+#app.web {
+  width: 360px;
+  height: 200px;
+  margin: 24px;
+  border-radius: 12px;
+  background: repeating-conic-gradient(#d9dce3 0 25%, #c9cdd6 0 50%) 0 0 / 16px 16px;
+  outline: 1px dashed #8a90a0;
+}
+
+#app {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  box-sizing: border-box;
+}
+
+canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 10px;
+  padding: 0 8px 6px;
+}
+
+.pet {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  cursor: pointer;
+}
+
+.pet canvas {
+  width: 96px;
+  height: 96px;
+  display: block;
+}
+
+.pet .name {
+  margin-top: -2px;
+  padding: 1px 7px;
+  border-radius: 8px;
+  background: var(--glass);
+  border: 1px solid var(--edge);
+  font-size: 11px;
+  font-weight: 600;
+  max-width: 100px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pet .name::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 1px;
+  background: var(--accent);
+  vertical-align: 1px;
+}
+
+.pet[data-state="needs_you"] .name {
+  border-color: #ffc83d;
+}
+.pet[data-state="error"] .name {
+  border-color: #ff4d4d;
+}
+
+.bubble {
+  position: absolute;
+  bottom: calc(100% - 4px);
+  left: 50%;
+  transform: translate(-50%, 4px);
+  width: max-content;
+  max-width: 150px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: var(--glass);
+  border: 1px solid var(--accent, var(--edge));
+  font-size: 11px;
+  line-height: 1.25;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 160ms,
+    transform 160ms;
+  z-index: 3;
+  overflow-wrap: anywhere;
+}
+
+.bubble.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+#app.offline .pet {
+  opacity: 0.55;
+  filter: grayscale(0.6);
+}
+
+.hint,
+.status {
+  position: absolute;
+  left: 8px;
+  font-size: 10px;
+  color: var(--ink);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+}
+
+.hint {
+  top: 50%;
+  right: 8px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.status {
+  top: 6px;
+}
+
+.gear {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--edge);
+  background: var(--glass);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 150ms;
+  z-index: 5;
+}
+
+#app:hover .gear,
+#app[data-view="pair-start"] .gear {
+  opacity: 1;
+}
+
+.card {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--glass);
+  border: 1px solid var(--edge);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  z-index: 4;
+}
+
+.card[hidden],
+.stage[hidden],
+.hint[hidden] {
+  display: none;
+}
+
+.card .mini {
+  width: 64px;
+  height: 64px;
+  flex: none;
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.small {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.paste {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--edge);
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+button {
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--edge);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+button:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--teal);
+  border-color: transparent;
+  color: #06201d;
+}
+
+button.primary:hover {
+  filter: brightness(1.08);
+}
+
+button.link {
+  background: none;
+  border: none;
+  color: var(--muted);
+  padding: 5px 4px;
+  margin-left: auto;
+}
+
+.settings {
+  top: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  overflow: auto;
+}
+
+.settings label {
+  display: grid;
+  grid-template-columns: 82px 1fr;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.settings input,
+.settings textarea {
+  font: inherit;
+  font-size: 11px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  padding: 3px 6px;
+  resize: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
