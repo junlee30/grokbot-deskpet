@@ -42,8 +42,9 @@ key to your pet: share it only with your bots.
   robot (accented in the avatar colour if known). `scripts/import-grokbot-art.mjs` copies the
   face strips and the avatar palette from `/Applications/Grok Bot.app` into
   `desktop/public/grokbot-art/` (gitignored) before every desktop build.
-- **Desktop**: toasts that never overlap or clip, a working label, the window position
-  remembered across restarts, an original pixel-art robot.
+- **Desktop**: every bot in its own small window you can drag anywhere (any monitor), each
+  bot's position remembered across restarts, toasts that never overlap or clip, a working
+  label, a menu bar icon, an original pixel-art robot.
 - `scripts/demo.sh` plays three fake bots from a dp2 code (`pbpaste | scripts/demo.sh -`);
   `scripts/e2e-v2.sh` runs publisher → mailbox → pet client against a local fake ntfy or the
   real ntfy.sh.
@@ -67,7 +68,10 @@ events to the webview over Tauri IPC.
 desktop/    Tauri v2 app; frontend is Vite + TypeScript, no framework
   art/build-sprites.mjs   generates the pixel-art spritesheets (no deps)
   public/sprites/         grokbot_<state>.png + _accent.png + manifest.json (see its README)
-  src/layout.ts           pure pet/toast layout (unit-tested in test/)
+  index.html, src/main.ts  main window: pairing, settings, status, "waiting for your bot"
+  pet.html, src/pet-main.ts  one bot's own window (opened by the Rust side, one per agent_id)
+  src/petwin.ts           pet-window helpers: labels, event de-dup, main window visibility (pure, tested)
+  src/layout.ts           pure pet/toast layout and the pet window size (unit-tested in test/)
   src/avatar.ts           avatar logic: strip tinting, face cadence, state cues, geometry (pure, tested)
   src/avatar-bank.ts      loads public/grokbot-art/ (gitignored, imported) and draws avatars
   src/presence.ts         what the pet bubble shows: toast vs persistent working label (pure, tested)
@@ -76,7 +80,9 @@ desktop/    Tauri v2 app; frontend is Vite + TypeScript, no framework
   src-tauri/src/mailbox.rs  v2 ntfy SSE client (since=, backoff, wake detection)
   src-tauri/src/secrets.rs  Keychain (keyring crate), one-time v1 token clean-up
   src-tauri/src/stream.rs  HTTP client, SSE parser, backoff, wake detection
-  src-tauri/src/window_state.rs  window position memory
+  src-tauri/src/window_state.rs  main window position memory
+  src-tauri/src/pets.rs   pet windows, pure: labels, routing, position store, cascade, clamp (tested)
+  src-tauri/src/pet_windows.rs  pet windows: open/route/move/close, menu bar icon + right-click menu
 skill/SKILL.md            Grok Bot skill: pairing, when/how to post status (+ avatar)
 skill/deskpet-publish     bot-side publisher (Node stdlib; tests in skill/test/)
 scripts/fake-ntfy.mjs     local stand-in for ntfy (tests, e2e)
@@ -176,13 +182,16 @@ On ntfy.sh it uses about 17 of the day's ~250 messages for your IP.
 Tests:
 
 ```bash
-cd desktop && npm test         # node:test: toast/pet layout, mailbox URL validation, avatar states,
-                               #   working label, connection status + old v1 settings clean-up
+cd desktop && npm test         # node:test: toast/pet layout, pet window size, mailbox URL validation,
+                               #   avatar states, working label, connection status, old v1 settings
+                               #   clean-up, pet-window helpers (labels, event de-dup, main visibility)
 cd desktop && npm run build    # tsc + vite build
 cd desktop/src-tauri && cargo test   # v2 pairing/envelope/replay/validation, mailbox client + reconnect,
-                                     #   SSE parser, backoff, v1 clean-up never touches v2, window clamp
+                                     #   SSE parser, backoff, v1 clean-up never touches v2, window clamp,
+                                     #   pet windows: routing, position store, cascade, reset, resize
 node --test skill/test/*.test.mjs    # publisher: crypto vectors, pairing, throttling, CLI vs fake ntfy
-scripts/e2e-v2.sh                    # publisher → fake ntfy → Rust pet client (add --real for ntfy.sh)
+scripts/e2e-v2.sh                    # two bots: publisher → fake ntfy → Rust pet client → one window
+                                     #   each (add --real for ntfy.sh)
 cd relay && npm test                 # deprecated v1 relay (self-hosting)
 ```
 
@@ -192,11 +201,30 @@ for app icons).
 
 ## Desktop behaviour
 
-- Transparent, frameless, always-on-top 360×200 window. Drag anywhere (background or a pet) to
-  move it. **The position is remembered** across restarts in the app config dir
-  (`window.json`). On launch it's restored only if it is on a connected monitor, and clamped
-  fully onto that monitor. Otherwise the window is centred. There is no Dock icon on macOS, so
-  quit from the ⚙ settings panel (hover the window).
+- **One window per bot.** Each `agent_id` gets its own transparent, frameless, always-on-top
+  window (Large 184×158, Small 152×126), opened on that bot's first event and sized for the
+  pet, its toast or working label above it, and its name below, so one bot's bubble never
+  covers another bot. Pet windows never take keyboard focus.
+  - **Drag** a pet (or the space around it) to move just that bot's window, anywhere, including
+    onto another monitor. A click (no drag) still opens the bot's link.
+  - **Positions are remembered per bot** across restarts in the app config dir (`pets.json`,
+    logical points, keyed by `agent_id`). A saved spot is restored only if it is on a connected
+    monitor, clamped fully onto it; otherwise (and for new bots) the pet goes to the first free
+    spot of a row along the bottom-right of the main screen (right to left, then the row
+    above), never on top of another pet.
+  - **Reset pet positions** (settings, menu bar icon, or right-click a pet) forgets them all and
+    lines up the open pets bottom-right again.
+  - Unpair or a new code closes every pet window (positions are kept for when the bots come back).
+    At most 12 pet windows are open at once.
+  - The Rust side sends each window only its own bot's events (`pet_windows.rs`); the pure
+    rules are in `pets.rs`. Each pet redraws at most ~30 times a second and only touches its
+    canvas when a pixel changes, so resting pets cost almost nothing.
+- **The main window** (pairing, settings, connection status) is transparent and frameless too.
+  It shows while pairing, while no bot has posted yet ("Waiting for your Grok Bot…") and for
+  settings, and hides itself otherwise. Its position is remembered (`window.json`, restored
+  only on a connected monitor). There is no Dock icon on macOS: **settings** are reachable from
+  the menu bar icon (Settings…, Reset pet positions, Quit Desk Pet), from the ⚙ that appears
+  next to a pet on hover, or by right-clicking a pet.
 - **Grok Bot avatars** (M2): a bot that sends `avatar` is drawn as its own profile picture:
   the app's face strip for that shape, tinted to the avatar colour exactly like the app tints
   its menu-bar icon, eye holes filled white, and a 1 px outline (light for dark colours, dark
@@ -217,16 +245,13 @@ for app icons).
   Squash/stretch and lean drop or repeat whole pixel rows/columns and are drawn as a few 1:1
   copies (`warpPlan`), so the art stays pixel-crisp. Without the imported art (or for bots
   without an avatar) the robot below is used, with the avatar colour as accent.
-- One pet per `agent_id`, each in its own column, name under it, accent colour per bot (Jarvis
-  teal, Claude orange, Scout violet, others hashed into a fixed palette). Frames are 32×32 at
-  integer 3×, 2× or 1×, whichever fits; ⚙ **Pet size** caps it at Large (3×) or Small (2×).
-  Up to 9 pets fit side by side and the rest show as "+N more". The left-to-right order is
-  remembered.
+- One pet per `agent_id`, name under it, accent colour per bot (Jarvis teal, Claude orange,
+  Scout violet, others hashed into a fixed palette). Frames are 32×32 at integer 3× (Large) or
+  2× (Small): ⚙ **Pet size**, which also resizes every pet window in place (feet stay put).
 - **Toasts** (`message`, 5 s): one per pet, the newest replaces the previous one. A toast sits
-  above its own pet inside that pet's column and is clamped inside the window, so toasts
-  never overlap each other or clip at the edge. Text is at most 2 lines with an ellipsis (full
-  text in the tooltip). The layout is a pure function in `src/layout.ts`, unit-tested for 1–16
-  pets.
+  above its own pet inside that pet's window and is clamped inside it, so it never clips at
+  the edge and never covers another bot. Text is at most 2 lines with an ellipsis (full text
+  in the tooltip). The layout is a pure function in `src/layout.ts`, unit-tested.
 - **Working label** (M3): while a pet shows `working` (or `juggling`), the latest message of
   that state stays above it as a small label with a spinning ring ("Reading the build log"),
   cut to 48 characters and at most 2 lines (full text in the tooltip), until the state ends. A
@@ -248,7 +273,7 @@ for app icons).
     another bot computer), **New code** (needs a second click: new topic and key, old bots go
     unheard), **Unpair** (deletes topic and key); **Pair** when nothing is paired.
   - **Mailbox URL**: `https://ntfy.sh` (chip) or your own ntfy; it applies to the next new code.
-  - **Click opens**, **Per-bot links**, **Pet size**.
+  - **Click opens**, **Per-bot links**, **Pet size**, **Reset pet positions**.
 - Click (not drag) a pet → opens its URL via `tauri-plugin-opener` (capability allows only
   `http(s)://*`). Configure in `desktop/public/deskpet.config.json`
   (`openUrls.default`, `openUrls.agents.{agent_id}`) or in the settings panel. Default
@@ -321,8 +346,13 @@ node scripts/import-grokbot-art.mjs          # or: cd desktop && npm run art
 
 - **Signing / notarization**: the debug `.app` is unsigned (Keychain may prompt after each
   rebuild); only the `app` bundle target is built (no dmg).
-- macOS only so far (keyring is built with `apple-native`). Windows/Linux untested. No tray
-  icon, no autostart.
+- macOS only so far (keyring is built with `apple-native`). Windows/Linux untested. No
+  autostart.
+- A pet window's transparent area (above and beside the pet) still takes clicks, like the old
+  single window did; the windows are kept small for that reason.
+- Debug builds have a self-test: `open --env DESKPET_SELFTEST_AGENTS=a,b "<the .app>"` opens a
+  window for each of those local fake bots (no network; positions in `pets-selftest.json`)
+  and logs where the windows really are to `~/Library/Logs/dev.deskpet.grokbot/deskpet.log`.
 - The browser prototype has no v2 (decryption and keys live in the Rust side).
 - No "bot paired" signal: the pet knows a bot is there when its first encrypted event
   arrives. A bot whose code was replaced keeps posting into a topic nobody reads.
