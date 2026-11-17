@@ -44,7 +44,8 @@ key to your pet: share it only with your bots.
   `desktop/public/grokbot-art/` (gitignored) before every desktop build.
 - **Desktop**: every bot in its own small window you can drag anywhere (any monitor), each
   bot's position remembered across restarts, toasts that never overlap or clip, a working
-  label, a menu bar icon, an original pixel-art robot.
+  label, a menu bar template icon, light and dark mode, and an original app icon (a pup peeking
+  over a desk) plus an original pixel-art robot for bots without an avatar.
 - `scripts/demo.sh` plays three fake bots from a dp2 code (`pbpaste | scripts/demo.sh -`);
   `scripts/e2e-v2.sh` runs publisher → mailbox → pet client against a local fake ntfy or the
   real ntfy.sh.
@@ -92,6 +93,34 @@ scripts/demo.sh           fake bots (Jarvis, Claude, Scout) cycling through stat
 scripts/dev.sh            tauri dev / web prototype / (deprecated) relay
 relay/                    DEPRECATED v1 relay, kept for self-hosters; the app no longer uses it
 ```
+
+## Look and feel
+
+The UI follows Apple's HIG for menu bar extras, app icons, Dark Mode, typography and motion.
+
+- **App icon** (`desktop/icons-src/icon.svg`): an original pup peeking over a desk, in Grok
+  Bot's family style (monochrome, chubby rounded shapes, two slanted pill eyes) with one
+  accent, the orange desk. It's a few large shapes so it reads at 16 px and segments cleanly
+  for macOS's dark and tinted icon styles.
+- **Menu bar icon** (`desktop/icons-src/tray-template.svg`): the same pup simplified to a black
+  + alpha **template** image at 18 pt, so macOS tints it for light, dark and highlighted menu
+  bars.
+- **Type and spacing:**
+  - System font (SF Pro) at 13 px body, 15 px titles and 11 px captions; the rounded system
+    font for the pets' own name tags and bubbles.
+  - Spacing on a 4/8 pt grid.
+  - Radii are 6 for inputs, 10 for buttons and bubbles, 12 for the panel.
+  - One orange primary button per view, with dark text on it (7:1).
+- **Light and dark:** every colour is a CSS variable with a light and a dark set
+  (`prefers-color-scheme`), with stronger edges under Increase Contrast.
+- **Reduced motion** (`prefers-reduced-motion`):
+  - Bubbles only fade.
+  - The working label's spinner becomes a dot.
+  - The empty-state pup holds still.
+  - Avatars keep their body still (no hops, squash, lean or shake). The state still reads from
+    the cloud, ring, balls, badges and z's (`calmCue`, tested).
+- **Hover:** a pet perks up by 2 px, its name tag gets a ring in the bot's colour, and the
+  tooltip says "Open *name* in Grok Bot".
 
 ## Desk Pet v2: private mailbox
 
@@ -197,14 +226,16 @@ scripts/e2e-v2.sh                    # two bots: publisher → fake ntfy → Rus
 cd relay && npm test                 # deprecated v1 relay (self-hosting)
 ```
 
-Regenerate sprites: `cd desktop && npm run sprites` (writes `public/sprites/*`,
-`art/preview.png`, `art/icon-1024.png`; re-run `cargo tauri icon art/icon-1024.png -o src-tauri/icons`
-for app icons).
+Regenerate sprites: `cd desktop && npm run sprites` (writes `public/sprites/*` and
+`art/preview.png`). Regenerate icons: `scripts/build-icons.sh` (every app icon size and the
+menu bar template from the SVGs in `desktop/icons-src/`). UI preview without a bot:
+`cd desktop && npm run dev`, then `http://localhost:1420/preview.html` (every pet state with
+sample bubbles) or `preview.html?controls` (the control window's views, with a fake code).
 
 ## Desktop behaviour
 
 - **One window per bot.** Each `agent_id` gets its own transparent, frameless, always-on-top
-  window (Large 184×158, Small 152×126), opened on that bot's first event and sized for the
+  window (Large 184×166, Small 152×134), opened on that bot's first event and sized for the
   pet, its toast or working label above it, and its name below, so one bot's bubble never
   covers another bot. Pet windows never take keyboard focus.
   - **Drag** a pet (or the space around it) to move just that bot's window, anywhere, including
@@ -214,19 +245,23 @@ for app icons).
     monitor, clamped fully onto it; otherwise (and for new bots) the pet goes to the first free
     spot of a row along the bottom-right of the main screen (right to left, then the row
     above), never on top of another pet.
-  - **Reset pet positions** (settings, menu bar icon, or right-click a pet) forgets them all and
+  - **Reset Pet Positions** (settings, menu bar icon, or right-click a pet) forgets them all and
     lines up the open pets bottom-right again.
   - Unpair or a new code closes every pet window (positions are kept for when the bots come back).
     At most 12 pet windows are open at once.
   - The Rust side sends each window only its own bot's events (`pet_windows.rs`); the pure
     rules are in `pets.rs`. Each pet redraws at most ~30 times a second and only touches its
     canvas when a pixel changes, so resting pets cost almost nothing.
-- **The main window** (pairing, settings, connection status) is transparent and frameless too.
-  It shows while pairing, while no bot has posted yet ("Waiting for your Grok Bot…") and for
-  settings, and hides itself otherwise. Its position is remembered (`window.json`, restored
-  only on a connected monitor). There is no Dock icon on macOS: **settings** are reachable from
-  the menu bar icon (Settings…, Reset pet positions, Quit Desk Pet), from the ⚙ that appears
-  next to a pet on hover, or by right-clicking a pet.
+- **The control window** (pairing, settings, connection status) is one frameless panel with
+  macOS vibrancy behind it (`windowEffects: popover`). Its header shows the app icon, "Desk Pet"
+  and the connection (a dot plus "Connected · ntfy.sh", "Connecting…", "Offline · …" or "Not
+  paired"), and the window is resized to fit the current view. It shows while pairing, while no
+  bot has posted yet (the empty state: "Waiting for your first bot…" with a **Show code**
+  button) and for settings, and hides itself otherwise. Its position is remembered
+  (`window.json`, restored only on a connected monitor). There is no Dock icon on macOS:
+  **settings** are reachable from the menu bar icon (**Settings…**, **Reset Pet Positions**,
+  then **Quit Desk Pet**), from the small settings button that appears next to a pet on hover,
+  or by right-clicking a pet.
 - **Grok Bot avatars** (M2): a bot that sends `avatar` is drawn as its own profile picture:
   the app's face strip for that shape, tinted to the avatar colour exactly like the app tints
   its menu-bar icon, eye holes filled white, and a 1 px outline (light for dark colours, dark
@@ -250,7 +285,9 @@ for app icons).
 - One pet per `agent_id`, name under it, accent colour per bot (Jarvis teal, Claude orange,
   Scout violet, others hashed into a fixed palette). Frames are 32×32 at integer 3× (Large) or
   2× (Small): ⚙ **Pet size**, which also resizes every pet window in place (feet stay put).
-- **Toasts** (`message`, 5 s): one per pet, the newest replaces the previous one. A toast sits
+- **Toasts** (`message`, 5 s): one per pet, the newest replaces the previous one. A toast is a
+  rounded speech bubble with a soft shadow and a tail pointing at its pet (light or dark with
+  the system; an amber or red edge for `needs_you` and `error`), fading in and out. It sits
   above its own pet inside that pet's window and is clamped inside it, so it never clips at
   the edge and never covers another bot. Text is at most 2 lines with an ellipsis (full text
   in the tooltip). The layout is a pure function in `src/layout.ts`, unit-tested.
@@ -268,7 +305,7 @@ for app icons).
   `src/sessions.ts` (pure, unit-tested).
 - `done` plays once, then idle. Idle for 5 min (30 s in `vite` dev) → sleeping.
 - **Connection** (Rust, `mailbox.rs`):
-  - Mailbox unreachable: pets dim to the offline sprite with "offline · …".
+  - Mailbox unreachable: pets dim to the offline sprite; the control window says "Offline · …".
   - Reconnect: exponential backoff, 0.5–1 s doubling up to 30 s, with jitter; a `429` waits at
     least 60 s. A 100 s silence watchdog catches dead connections (ntfy sends keepalives every
     45 s). Reconnects ask `since=<last message id>`.
@@ -277,9 +314,11 @@ for app icons).
 - **Settings** (⚙):
   - The pairing row: `Paired · ntfy.sh` (plus `· no bot yet` until a bot posts), **Show code** (for
     another bot computer), **New code** (needs a second click: new topic and key, old bots go
-    unheard), **Unpair** (deletes topic and key); **Pair** when nothing is paired.
-  - **Mailbox URL**: `https://ntfy.sh` (chip) or your own ntfy; it applies to the next new code.
-  - **Pet size**, **Reset pet positions**.
+    unheard), **Unpair** (also a second click; deletes topic and key); **Pair** when nothing is
+    paired.
+  - **Mailbox**: `https://ntfy.sh` (button) or your own ntfy; it applies to the next new code.
+  - **Pet size** (Large / Small), **Reset Pet Positions**; **Quit Desk Pet** and the version at
+    the bottom.
 - **Click (not drag) a pet → Grok Bot opens on that bot's chat.** The pet opens
   `grokbot://app/v1/agent?id=<grokbot_id>` through `tauri-plugin-opener`, using the bot's
   newest valid `grokbot_id`. A bot that hasn't sent one gets `grokbot://`, which just brings
