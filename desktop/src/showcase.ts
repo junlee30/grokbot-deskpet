@@ -2,10 +2,9 @@
 //   /showcase.html?mode=hero    1280×640 desktop with pets, a notification and the menu bar
 //   /showcase.html?mode=social  1280×640 share card: title on the left, pets on the right
 //   /showcase.html?mode=gif     the hero scene, looping a bot through thinking → working → done
-// Jarvis wears Grok Bot's default avatar (blob/black), loaded from public/grokbot-art/
-// (`npm run art`): the owner chose to show it, with a caption saying it is Grok Bot's art
-// and not part of Desk Pet. Every other bot uses Desk Pet's original robot art. Not part of
-// the build.
+// Every pet wears a Grok Bot avatar, loaded from public/grokbot-art/ (`npm run art`): the
+// owner chose to show them, with a caption saying it is Grok Bot's art and not part of
+// Desk Pet. Not part of the build.
 import { DEFAULTS, type DeskPetConfig } from "./config.ts";
 import type { PetState, StateEvent } from "./events.ts";
 import { layoutPets, petWindowSize } from "./layout.ts";
@@ -20,7 +19,7 @@ const W = 1280;
 const H = 640;
 const cfg: DeskPetConfig = { ...DEFAULTS, toastMs: 1e9 };
 const bank = new SpriteBank();
-/** Grok Bot's avatar art, for Jarvis only (see the header). */
+/** Grok Bot's avatar art (see the header). */
 const art = new AvatarBank();
 const scene = document.getElementById("scene")!;
 scene.style.width = `${W}px`;
@@ -125,10 +124,10 @@ async function main(): Promise<void> {
   const right = (i: number) => W - 26 - PW - i * (PW - 6);
   // Grok Bot's default avatar: a black blob.
   const jarvis: Bot = { id: "jarvis", name: "Jarvis", color: "black", shape: "blob", x: right(0), y: ROW };
-  const ruby: Bot = { id: "ruby", name: "루비", color: "red", x: right(1), y: ROW, lang: "ko" };
-  const scout: Bot = { id: "scout", name: "Scout", color: "orange", x: right(2), y: ROW };
-  const nova: Bot = { id: "nova", name: "Nova", color: "blue", x: right(3), y: ROW };
-  const pip: Bot = { id: "pip", name: "Pip", color: "violet", x: right(4), y: ROW };
+  const ruby: Bot = { id: "ruby", name: "루비", color: "red", shape: "heart", x: right(1), y: ROW, lang: "ko" };
+  const scout: Bot = { id: "scout", name: "Scout", color: "orange", shape: "star", x: right(2), y: ROW };
+  const nova: Bot = { id: "nova", name: "Nova", color: "blue", shape: "cloud", x: right(3), y: ROW };
+  const pip: Bot = { id: "pip", name: "Pip", color: "violet", shape: "egg", x: right(4), y: ROW };
 
   if (mode === "social") {
     scene.append(

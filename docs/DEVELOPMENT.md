@@ -104,15 +104,16 @@ sample bubbles) or `preview.html?controls` (the control window's views, with a f
 `docs/images/` holds the README banner (`hero.png`), the animation (`demo.gif`) and the
 GitHub social preview (`social-preview.jpg`, uploaded by hand in the repo's Settings →
 Social preview). They come from a dev-only scene, `desktop/showcase.html`
-(`npm run dev`, then `/showcase.html?mode=hero|social|gif`), with real `Pet`s. Jarvis
-wears Grok Bot's default avatar (blob/black, from `public/grokbot-art/`: run `npm run art`
-first); every other pet uses Desk Pet's robot. Showing that one avatar was the owner's
-choice, and the README captions it as Grok Bot's art that Desk Pet doesn't include. Don't
-add more of Grok Bot's art to published images without the same decision.
+(`npm run dev`, then `/showcase.html?mode=hero|social|gif`), with real `Pet`s. Every
+pet wears a Grok Bot avatar (from `public/grokbot-art/`: run `npm run art` first; Jarvis has
+the default blob/black). Showing that art was the owner's choice, and the README captions
+it as Grok Bot's art that Desk Pet doesn't include. The app and its release builds still
+never contain it.
 
 - Screenshot `hero` and `social` at 1280×640 with a device pixel ratio of 2 (Chrome DevTools
   device toolbar); save `social` as a 1280×640 JPEG under 1 MB.
-- Screen-record `gif` for one 9-second loop, crop to the row of pets, then:
+- Screen-record `gif` for one 9-second loop, crop to the row of pets (at 1× that's
+  `crop=980:222:300:418`), then:
   `ffmpeg -i demo.mp4 -vf "crop=…,fps=15,scale=980:-2:flags=lanczos,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle" -loop 0 demo.gif`
 
 ## Releasing

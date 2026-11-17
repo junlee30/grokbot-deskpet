@@ -1,7 +1,7 @@
 <p align="center">
-  <img src="docs/images/hero.png" alt="Desk Pet: five pets along the bottom of a Mac desktop, each showing what its Grok Bot is doing, with a 'Scout needs you' notification. Jarvis is a black blob, the others are pixel-art robots" width="100%" />
+  <img src="docs/images/hero.png" alt="Desk Pet: five pets along the bottom of a Mac desktop, each showing what its Grok Bot is doing, with a 'Scout needs you' notification. each pet drawn as a Grok Bot avatar: a violet egg, a blue cloud, an orange star, a red heart and a black blob" width="100%" />
   <br />
-  <sub>Jarvis wears Grok Bot's default avatar. That's Grok Bot's art: Desk Pet doesn't include it, it copies it from your own Grok Bot. The other pets use Desk Pet's built-in robot.</sub>
+  <sub>The pets wear Grok Bot avatars (Jarvis has the default one). That's Grok Bot's art: Desk Pet doesn't include it, it copies it from your own Grok Bot. Without Grok Bot, pets are Desk Pet's own pixel-art robot.</sub>
 </p>
 
 <h1 align="center">Desk Pet</h1>
@@ -45,7 +45,7 @@
 The same line works for every bot you have. It contains the key to your pets, so only share it with your own bots.
 
 <p align="center">
-  <img src="docs/images/demo.gif" alt="Pets animating: Jarvis (a black blob) goes from thinking to working to done, Scout waits for an answer, Nova juggles two tasks, 루비 works in Korean, Pip sleeps" width="100%" />
+  <img src="docs/images/demo.gif" alt="Pets animating: Jarvis goes from thinking to working to done, Scout waits for an answer, Nova juggles two tasks, 루비 works in Korean, Pip sleeps" width="100%" />
 </p>
 
 ## What you get
@@ -56,7 +56,7 @@ The same line works for every bot you have. It contains the key to your pets, so
 - **"Needs you" notifications**, and the menu bar icon shows how many bots are waiting.
 - **Click a pet** to open that bot's chat in Grok Bot. **Right-click** to hide it until its bot does something new.
 - **Speaks your language.** Bots write their status in the language you talk to them in, and each pet's own text follows its bot. The app's windows and menus follow your Mac's language, like Grok Bot. English and Korean so far.
-- **Looks like your bots.** With Grok Bot on the same Mac, each pet is drawn as its bot's own profile picture, like Jarvis above, copied from your Grok Bot when Desk Pet starts (Desk Pet never ships that art). Without Grok Bot, pets are Desk Pet's original pixel-art robot in each bot's colour, like the others.
+- **Looks like your bots.** With Grok Bot on the same Mac, each pet is drawn as its bot's own profile picture, like the pets above, copied from your Grok Bot when Desk Pet starts (Desk Pet never ships that art). Without Grok Bot, pets are Desk Pet's original pixel-art robot in each bot's colour.
 - **Light and dark mode, Reduced Motion, Increase Contrast.** It lives in the menu bar, not the Dock.
 
 ## How it works
