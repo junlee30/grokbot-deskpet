@@ -16,8 +16,24 @@ pub fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .user_agent(concat!("grokbot-deskpet/", env!("CARGO_PKG_VERSION")))
+        .redirect(reqwest::redirect::Policy::custom(redirect_policy))
         .build()
         .expect("http client")
+}
+
+const MAX_REDIRECTS: usize = 5;
+
+/// Follow a mailbox's redirects, but never from https down to plain http: the request URL
+/// carries the topic name. At most `MAX_REDIRECTS` hops.
+fn redirect_policy(attempt: reqwest::redirect::Attempt) -> reqwest::redirect::Action {
+    let was_https = attempt.previous().first().is_some_and(|u| u.scheme() == "https");
+    if was_https && attempt.url().scheme() != "https" {
+        attempt.error("refusing to follow a redirect from https to http")
+    } else if attempt.previous().len() > MAX_REDIRECTS {
+        attempt.stop()
+    } else {
+        attempt.follow()
+    }
 }
 
 // ---------------------------------------------------------------- backoff
@@ -165,5 +181,42 @@ mod tests {
         let mut p = SseParser::default();
         p.push(&vec![b'x'; MAX_BUFFER + 10]);
         assert!(p.buf.is_empty());
+    }
+
+    /// A tiny local server: `/hop/<n>` redirects to `/hop/<n-1>`, `/hop/0` answers "ok", and
+    /// `/to-elsewhere` redirects to `target`.
+    async fn redirect_server(target: &'static str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = listener.accept().await {
+                let mut buf = vec![0; 2048];
+                let n = s.read(&mut buf).await.unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let path = req.split_whitespace().nth(1).unwrap_or("/").to_string();
+                let resp = match path.strip_prefix("/hop/").and_then(|n| n.parse::<u32>().ok()) {
+                    Some(0) => "HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok".to_string(),
+                    Some(n) => format!("HTTP/1.1 302 Found\r\nlocation: /hop/{}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n", n - 1),
+                    None => format!("HTTP/1.1 302 Found\r\nlocation: {target}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"),
+                };
+                let _ = s.write_all(resp.as_bytes()).await;
+            }
+        });
+        base
+    }
+
+    #[tokio::test]
+    async fn redirects_are_followed_a_few_times() {
+        let base = redirect_server("/hop/0").await;
+        let c = http_client();
+        let ok = c.get(format!("{base}/hop/3")).send().await.unwrap();
+        assert_eq!(ok.text().await.unwrap(), "ok");
+        // Past MAX_REDIRECTS the client stops and hands back the redirect itself.
+        let stopped = c.get(format!("{base}/hop/{}", MAX_REDIRECTS + 3)).send().await.unwrap();
+        assert_eq!(stopped.status(), 302);
+        // http → http is allowed (local dev mailboxes); only https → http is refused.
+        let same = c.get(format!("{base}/to-elsewhere")).send().await.unwrap();
+        assert_eq!(same.text().await.unwrap(), "ok");
     }
 }

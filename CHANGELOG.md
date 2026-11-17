@@ -5,6 +5,8 @@ The bot skill has its own versions (`skill-v…` tags); the skill version each a
 
 ## Unreleased
 
+- **Security:** the mailbox connection no longer follows a redirect from `https` to plain
+  `http`, which would have sent the topic name unencrypted.
 - **Ask your Grok Bot to install it:** paste one line from the README; the bot follows
   [docs/BOT-INSTALL.md](docs/BOT-INSTALL.md), installs and opens Desk Pet, then asks for the
   pairing line.
