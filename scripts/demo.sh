@@ -1,21 +1,18 @@
 #!/usr/bin/env bash
-# Desk Pet demo: plays three fake Grok Bots (Jarvis, Claude, Scout) against the relay.
+# Desk Pet demo: plays three fake Grok Bots (Jarvis, Claude, Scout) through the private mailbox.
 #
-#   pbpaste | scripts/demo.sh -    # v2: read a dp2.… code from stdin (keeps it off the command line)
-#   scripts/demo.sh K7Q-42M        # v1: act as the bot side for the relay code shown in the app
-#   DESKPET_CODE=K7Q-42M scripts/demo.sh
-#   scripts/demo.sh                # v1, no code: create a pairing here, print only the CODE
-#   scripts/demo.sh --fast ...     # short sleeps (CI / smoke test)
-#   scripts/demo.sh --no-avatars   # send no avatars (pre-0.3.0 events: robots only)
+#   pbpaste | scripts/demo.sh -    # read the dp2.… code (or the whole paste line) from stdin
+#   scripts/demo.sh --fast -       # short sleeps (CI / smoke test)
+#   scripts/demo.sh --no-avatars - # send no avatars (robots only)
 #
-# v2 (dp2.… codes): posts through skill/deskpet-publish into the private mailbox (ntfy), with a
-# throwaway DESK_PET_HOME that is deleted afterwards. A dp2 code also works as an argument or in
+# Posts through skill/deskpet-publish into the private mailbox (ntfy), with a throwaway
+# DESK_PET_HOME that is deleted afterwards. A dp2 code also works as an argument or in
 # DESKPET_CODE, but stdin keeps it out of `ps`. Note ntfy.sh's free tier: ~250 messages/day per IP.
+# Each bot sends its Grok Bot avatar: Jarvis blob/black, Claude clover/orange, Scout heart/red.
 #
-# Each bot sends its Grok Bot avatar (relay >= 0.3.0, and always on v2): Jarvis blob/black,
-# Claude clover/orange, Scout heart/red.
-#
-# Env: RELAY_URL (v1, default http://127.0.0.1:8787)
+# DEPRECATED v1 relay (self-hosted only), explicitly:
+#   RELAY_URL=https://your-relay.example scripts/demo.sh --v1 K7Q-42M   # bot side for that code
+#   RELAY_URL=http://127.0.0.1:8787 scripts/demo.sh --v1                # no code: pair here, print only the CODE
 #
 # Secrets (the v1 token, the dp2 code) are never printed, never put on a command line by this
 # script (curl reads the header from a process substitution; the publisher reads the dp2 code
@@ -23,14 +20,15 @@
 set -euo pipefail
 set +x
 
-RELAY_URL="${RELAY_URL:-http://127.0.0.1:8787}"
+RELAY_URL="${RELAY_URL:-}"
 RELAY_URL="${RELAY_URL%/}"
 CODE="${DESKPET_CODE:-}"
 STEP=1.5
 AVATARS=1
+V1=0
 
 usage() {
-  sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -38,6 +36,7 @@ for arg in "$@"; do
   case "$arg" in
     --fast) STEP=0.4 ;;
     --no-avatars) AVATARS=0 ;;
+    --v1) V1=1 ;;
     -h | --help) usage 0 ;;
     -) IFS= read -r CODE || true ;;
     -*) echo "unknown flag: $arg" >&2; usage 2 ;;
@@ -53,6 +52,22 @@ failed=0
 skipped=0
 V2=0
 case "$CODE" in *dp2.*) V2=1 ;; esac
+
+if [[ "$V1" == 1 ]]; then
+  [[ "$V2" == 0 ]] || { echo "--v1 is for old relay codes; a dp2 code needs no flag" >&2; exit 2; }
+  [[ -n "$RELAY_URL" ]] || { echo "--v1 needs RELAY_URL (your own relay; there is no hosted relay any more)" >&2; exit 2; }
+  echo "note: v1 (relay) is deprecated; v2 needs no relay: pbpaste | scripts/demo.sh -" >&2
+elif [[ "$V2" == 0 ]]; then
+  if [[ -z "$CODE" ]]; then
+    echo "no code: copy one in Desk Pet (⚙ → Pair / Show code), then: pbpaste | scripts/demo.sh -" >&2
+  elif [[ "$CODE" =~ ^[[:space:]]*[A-Za-z0-9]{3}-?[A-Za-z0-9]{3}[[:space:]]*$ ]]; then
+    echo "that looks like an old v1 relay code; v1 is deprecated. Make a dp2 code (⚙ → Pair)," >&2
+    echo "or for your own relay: RELAY_URL=<url> scripts/demo.sh --v1 <code>" >&2
+  else
+    echo "that is not a dp2 code (cut off?)" >&2
+  fi
+  exit 2
+fi
 
 # avatar_json <agent_id>: the bot's Grok Bot avatar ({shape, color}), as in its profile.json.
 avatar_json() {
@@ -94,9 +109,9 @@ json_field() {
   node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const v=JSON.parse(s)[process.argv[1]];if(typeof v==="string")process.stdout.write(v)}catch{}})' "$1"
 }
 
-if [[ "$V2" == 0 ]]; then
+if [[ "$V1" == 1 ]]; then
 HEALTH="$(curl -fsS -m 5 "$RELAY_URL/health" 2>/dev/null)" || {
-  echo "relay not reachable at $RELAY_URL (start it with: scripts/dev.sh)" >&2
+  echo "relay not reachable at $RELAY_URL (a local one: scripts/dev.sh relay)" >&2
   exit 1
 }
 # Relays before 0.3.0 reject the avatar field (unknown fields are a 400): don't send it there.
@@ -152,7 +167,7 @@ post() {
   printf '  %-7s %-10s %-13s %s%s\n' "$id" "$state" "$event" "$code" "${msg:+  \"$msg\"}"
 }
 
-echo "demo: Jarvis, Claude and Scout -> $RELAY_URL (step ${STEP}s)"
+echo "demo (deprecated v1 relay): Jarvis, Claude and Scout -> $RELAY_URL (step ${STEP}s)"
 fi
 
 pause() { sleep "$STEP"; }
