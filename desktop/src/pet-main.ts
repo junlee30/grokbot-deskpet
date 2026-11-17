@@ -5,7 +5,7 @@ import { loadConfig, type DeskPetConfig } from "./config.ts";
 import { isStateEvent, type StateEvent } from "./events.ts";
 import { layoutPets } from "./layout.ts";
 import { Pet } from "./pets.ts";
-import { agentOfLabel, EventFeed, grokbotId, grokbotUrl } from "./petwin.ts";
+import { agentOfLabel, EventFeed, frameDelay, grokbotId, grokbotUrl } from "./petwin.ts";
 import { invokeCmd, onEvent, openExternal, startWindowDrag, windowLabel } from "./platform.ts";
 import { SpriteBank } from "./sprites.ts";
 import { AvatarBank } from "./avatar-bank.ts";
@@ -15,7 +15,10 @@ const app = document.querySelector<HTMLDivElement>("#app")!;
 // Reduced motion: avatars hold their body still (the state still shows in its overlays).
 const calm = window.matchMedia("(prefers-reduced-motion: reduce)");
 Pet.reducedMotion = calm.matches;
-calm.addEventListener("change", () => (Pet.reducedMotion = calm.matches));
+calm.addEventListener("change", () => {
+  Pet.reducedMotion = calm.matches;
+  kick();
+});
 app.innerHTML = `<div class="stage" id="stage"></div>`;
 const stage = document.getElementById("stage") as HTMLDivElement;
 /**
@@ -35,7 +38,6 @@ const GEAR_RESERVE = 24;
  * per window, and still shorter than the shortest held frame that matters (a 35 ms blink).
  * A tick whose pixels didn't change touches nothing (Pet.present).
  */
-const FRAME_MS = 32;
 
 let cfg: DeskPetConfig;
 const bank = new SpriteBank();
@@ -50,6 +52,7 @@ function relayout(): void {
   if (!pet) return;
   const [slot] = layoutPets(1, window.innerWidth, window.innerHeight, cfg.petSize);
   pet.place(slot ?? null);
+  kick();
 }
 window.addEventListener("resize", relayout);
 
@@ -64,11 +67,13 @@ function apply(e: StateEvent): void {
     relayout();
   }
   pet.update(e, Date.now(), cfg.toastMs);
+  kick();
 }
 
 function setOffline(status: unknown): void {
   offline = (status as { status?: string } | null)?.status === "offline";
   app.classList.toggle("offline", offline);
+  kick();
 }
 
 /**
@@ -118,8 +123,36 @@ app.addEventListener("contextmenu", (ev) => {
 });
 
 // ---------- render loop ----------
+// One tick per change: a resting pet sleeps until its next blink, breath or z (petwin.ts
+// nextChangeAt), at most a second; anything busy runs at FRAME_MS. A new event ticks at once.
+let timer: ReturnType<typeof setTimeout> | null = null;
+
 function frame(): void {
-  pet?.draw(bank, Date.now(), cfg, offline);
+  if (!pet) return;
+  pet.draw(bank, Date.now(), cfg, offline);
+  const call = pet.attention.step(pet.el.dataset.state ?? "");
+  if (call) {
+    void invokeCmd("pet_attention", {
+      needs: call.needs,
+      notify: call.notify && cfg.notifyNeedsYou,
+      name: pet.name,
+      message: call.message ?? null,
+    }).catch(() => {});
+  }
+}
+
+function tick(): void {
+  timer = null;
+  frame();
+  const now = Date.now();
+  timer = setTimeout(tick, frameDelay(pet ? pet.nextFrameAt(now) : now, now));
+}
+
+/** Draw now (an event arrived, the window resized, settings changed). */
+function kick(): void {
+  if (timer === null) return; // not started yet
+  clearTimeout(timer);
+  tick();
 }
 
 async function boot(): Promise<void> {
@@ -155,7 +188,7 @@ async function boot(): Promise<void> {
   for (const e of init?.events ?? []) if (isStateEvent(e)) apply(e);
   ready = true;
   for (const e of early.splice(0)) apply(e);
-  setInterval(frame, FRAME_MS);
+  tick();
 }
 
 window.addEventListener("error", (e) => console.warn("deskpet pet error", e.message));

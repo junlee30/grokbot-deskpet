@@ -13,6 +13,8 @@ export interface DeskPetConfig {
   toastMs: number;
   /** Pet size (persisted); each bot's window is sized for it (layout.ts petWindowSize). */
   petSize: PetSize;
+  /** A macOS notification when a bot starts waiting for you (needs_you). */
+  notifyNeedsYou: boolean;
 }
 
 const SETTINGS_KEY = "deskpet.settings";
@@ -24,9 +26,10 @@ export const DEFAULTS: DeskPetConfig = {
   staleActiveMs: 10 * 60_000,
   toastMs: 5000,
   petSize: "large",
+  notifyNeedsYou: true,
 };
 
-export type Settings = Partial<Pick<DeskPetConfig, "mailboxUrl" | "petSize">>;
+export type Settings = Partial<Pick<DeskPetConfig, "mailboxUrl" | "petSize" | "notifyNeedsYou">>;
 
 function readSettings(): Settings {
   try {
@@ -58,6 +61,7 @@ export async function loadConfig(): Promise<DeskPetConfig> {
   const s = readSettings();
   if (s.mailboxUrl) cfg.mailboxUrl = s.mailboxUrl;
   if (s.petSize === "large" || s.petSize === "small") cfg.petSize = s.petSize;
+  if (typeof s.notifyNeedsYou === "boolean") cfg.notifyNeedsYou = s.notifyNeedsYou;
   const mb = validateMailboxUrl(cfg.mailboxUrl);
   cfg.mailboxUrl = mb.ok ? mb.url : DEFAULTS.mailboxUrl;
   return cfg;

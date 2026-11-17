@@ -74,3 +74,64 @@ export function carryMessage(prev: SessionInfo | undefined, state: PetState, mes
   if (message && message.trim()) return message;
   return prev && prev.state === state ? prev.message : undefined;
 }
+
+/** Events the mailbox received within this long count as fresh (older ones are catch-up). */
+export const FRESH_MS = 10_000;
+
+/** When the mailbox received an event (never in the future), and whether that's fresh. */
+export function receivedAt(e: { received_at: string }, now: number): { at: number; fresh: boolean } {
+  const at = Math.min(now, Date.parse(e.received_at) || now);
+  return { at, fresh: now - at < FRESH_MS };
+}
+
+export interface PetNotice {
+  kind: "dropped" | "outdated";
+  text: string;
+}
+
+/**
+ * A one-off note in the pet's bubble about the bot's Desk Pet setup (not about its work):
+ * posts lost to the mailbox's rate limit, or a publisher older than this app's. The outdated
+ * note is shown once (`nagged`); the pet's tooltip keeps saying it.
+ */
+export function petNotice(e: { pv_outdated?: boolean; dropped?: number }, nagged: boolean): PetNotice | null {
+  const n = typeof e.dropped === "number" && Number.isInteger(e.dropped) && e.dropped > 0 ? e.dropped : 0;
+  if (n) return { kind: "dropped", text: `Missed ${n} update${n === 1 ? "" : "s"} (mailbox limit reached)` };
+  if (e.pv_outdated === true && !nagged) return { kind: "outdated", text: "My Desk Pet skill is out of date: ask me to update it" };
+  return null;
+}
+
+export interface AttentionCall {
+  needs: boolean;
+  /** Send a notification (a fresh needs_you; the user's setting is applied by the caller). */
+  notify: boolean;
+  message?: string;
+}
+
+/**
+ * Whether the pet shows needs_you, for the menu bar count and notifications. `arm` on a fresh
+ * needs_you event; `step` every frame with the state drawn. A catch-up needs_you (app start)
+ * still counts but doesn't notify; a fresh one while already waiting notifies again.
+ */
+export class Attention {
+  private shown = false;
+  private pending: string | null = null;
+
+  arm(message?: string): void {
+    this.pending = message ?? "";
+  }
+
+  step(state: string): AttentionCall | null {
+    const needs = state === "needs_you";
+    const pending = this.pending;
+    this.pending = null;
+    if (!needs) {
+      if (!this.shown) return null;
+      this.shown = false;
+      return { needs: false, notify: false };
+    }
+    if (this.shown && pending === null) return null;
+    this.shown = true;
+    return pending === null ? { needs: true, notify: false } : { needs: true, notify: true, ...(pending ? { message: pending } : {}) };
+  }
+}

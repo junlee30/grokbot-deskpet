@@ -8,6 +8,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod grokbot;
+mod lock;
 mod mailbox;
 mod pet_windows;
 mod pets;
@@ -22,6 +23,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 use stream::StreamHandle;
 use tauri::{AppHandle, Emitter, Manager, State};
+use crate::lock::Locked;
 
 /// The v2 mailbox subscription.
 #[derive(Default)]
@@ -54,7 +56,8 @@ fn v2_normalize_url(mailbox_url: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn v2_status() -> Result<V2Status, String> {
+async fn v2_status(window: tauri::WebviewWindow) -> Result<V2Status, String> {
+    pet_windows::require_main(&window)?;
     let p = blocking(secrets::v2_get).await?;
     Ok(V2Status { paired: p.is_some(), mailbox: p.and_then(|p| host_of(&p.base)) })
 }
@@ -73,7 +76,7 @@ fn start_mailbox(app: &AppHandle, http: &reqwest::Client, st: &MailboxState, p: 
             pet_windows::on_state(&a, v);
         }
     });
-    let mut slot = st.0.lock().unwrap();
+    let mut slot = st.0.locked();
     if let Some(h) = slot.take() {
         h.stop();
     }
@@ -107,7 +110,8 @@ async fn v2_pairing_code(window: tauri::WebviewWindow) -> Result<Option<String>,
 
 /// Start (or restart) the subscription. Ok(false) if there is no v2 pairing.
 #[tauri::command]
-async fn v2_stream_start(app: AppHandle, http: State<'_, Http>, st: State<'_, MailboxState>) -> Result<bool, String> {
+async fn v2_stream_start(window: tauri::WebviewWindow, app: AppHandle, http: State<'_, Http>, st: State<'_, MailboxState>) -> Result<bool, String> {
+    pet_windows::require_main(&window)?;
     let Some(p) = blocking(secrets::v2_get).await? else {
         return Ok(false);
     };
@@ -116,10 +120,12 @@ async fn v2_stream_start(app: AppHandle, http: State<'_, Http>, st: State<'_, Ma
 }
 
 #[tauri::command]
-fn v2_stream_stop(st: State<'_, MailboxState>) {
-    if let Some(h) = st.0.lock().unwrap().take() {
+fn v2_stream_stop(window: tauri::WebviewWindow, st: State<'_, MailboxState>) -> Result<(), String> {
+    pet_windows::require_main(&window)?;
+    if let Some(h) = st.0.locked().take() {
         h.stop();
     }
+    Ok(())
 }
 
 /// Unpair v2: stop and delete topic + key. Bots still holding the old code publish into a
@@ -127,17 +133,19 @@ fn v2_stream_stop(st: State<'_, MailboxState>) {
 #[tauri::command]
 async fn v2_unpair(window: tauri::WebviewWindow, st: State<'_, MailboxState>) -> Result<(), String> {
     pet_windows::require_main(&window)?;
-    if let Some(h) = st.0.lock().unwrap().take() {
+    if let Some(h) = st.0.locked().take() {
         h.stop();
     }
     blocking(secrets::v2_delete).await
 }
 
 #[tauri::command]
-fn v2_reconnect_now(st: State<'_, MailboxState>) {
-    if let Some(h) = st.0.lock().unwrap().as_ref() {
+fn v2_reconnect_now(window: tauri::WebviewWindow, st: State<'_, MailboxState>) -> Result<(), String> {
+    pet_windows::require_main(&window)?;
+    if let Some(h) = st.0.locked().as_ref() {
         h.kick();
     }
+    Ok(())
 }
 
 /// One line in `~/Library/Logs/<identifier>/deskpet.log` (and stderr). Never pass secrets here.
@@ -157,6 +165,7 @@ fn log_line(app: &AppHandle, msg: &str) {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(Http(stream::http_client()))
         .manage(MailboxState::default())
         .manage(pet_windows::PetWindows::default())
@@ -176,6 +185,7 @@ fn main() {
             pet_windows::pets_reset_positions,
             pet_windows::open_settings_window,
             pet_windows::pet_menu,
+            pet_windows::pet_attention,
             pet_windows::app_quit,
             grokbot::grokbot_installed,
         ])

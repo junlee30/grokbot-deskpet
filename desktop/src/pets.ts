@@ -1,13 +1,13 @@
 // Pet model + view: one pet per agent_id. Which of its sessions count: sessions.ts.
 import type { DeskPetConfig } from "./config.ts";
 import { LABEL_OVERLAP_PX, layoutToast, tailX, toastMaxWidth, type Slot } from "./layout.ts";
-import { bubbleView, carryMessage, sameView, stickyLabel, type BubbleView } from "./presence.ts";
+import { Attention, bubbleView, carryMessage, petNotice, receivedAt, sameView, stickyLabel, type BubbleView } from "./presence.ts";
 import type { PetState, StateEvent } from "./events.ts";
 import { displayFor, eventOrder, type Session } from "./sessions.ts";
 import { accentFor, type AnimState, type SpriteBank } from "./sprites.ts";
 import { accentHex, AVATAR_DONE_MS, avatarCue, calmCue, avatarGeometry, colorHex, FacePlayer, parseAvatar, type Avatar } from "./avatar.ts";
 import { drawAvatar, type AvatarBank } from "./avatar-bank.ts";
-import { samePixels } from "./petwin.ts";
+import { nextChangeAt, samePixels, type FrameClock } from "./petwin.ts";
 
 const MAX_SESSIONS = 16;
 
@@ -34,6 +34,14 @@ export class Pet {
   private toastMsg: { text: string; until: number } | null = null;
   private view: BubbleView = { mode: "hidden" };
   private slot: Slot | null = null;
+  /** needs_you tracking for the menu bar count and notifications (pet-main.ts steps it). */
+  readonly attention = new Attention();
+  /** The bot's publisher is older than this app's (protocol/v2.json publisher_version). */
+  private outdated = false;
+  /** The out-of-date note was shown once already. */
+  private nagged = false;
+  /** What the last frame was drawn from, for scheduling the next one (petwin.ts nextChangeAt). */
+  private clock: FrameClock | null = null;
 
   readonly el: HTMLDivElement;
   /** The toast lives in the stage (window coordinates), not inside the pet element. */
@@ -87,7 +95,7 @@ export class Pet {
     this.label = document.createElement("div");
     this.label.className = "name";
     this.label.textContent = name;
-    this.el.title = `Open ${name} in Grok Bot`;
+    this.el.title = this.titleText();
     this.tag = document.createElement("div");
     this.tag.className = "tag";
     this.tag.append(this.label);
@@ -182,10 +190,11 @@ export class Pet {
       this.name = e.agent_name;
       this.label.textContent = e.agent_name;
       this.snapTag();
-      this.el.title = `Open ${e.agent_name} in Grok Bot`;
     }
-    const at = Math.min(now, Date.parse(e.received_at) || now);
-    const fresh = now - at < 10_000;
+    if (typeof e.pv_outdated === "boolean") this.outdated = e.pv_outdated;
+    const title = this.titleText();
+    if (this.el.title !== title) this.el.title = title;
+    const { at, fresh } = receivedAt(e, now);
     const prev = this.sessions.get(e.session);
     this.sessions.delete(e.session);
     if (this.sessions.size >= MAX_SESSIONS) this.sessions.delete(this.sessions.keys().next().value!);
@@ -196,6 +205,23 @@ export class Pet {
     if (e.state === "done" && fresh) this.doneSeq++;
     else if (e.state === "done") this.playedDoneSeq = this.doneSeq;
     if (e.message && fresh) this.toast(e.message, toastMs, now);
+    if (e.state === "needs_you" && fresh) this.attention.arm(e.message);
+    // Notes about the bot's setup wait for an event without a message of its own.
+    const note = fresh && !e.message ? petNotice(e, this.nagged) : null;
+    if (note) {
+      this.toast(note.text, toastMs * 2, now);
+      if (note.kind === "outdated") this.nagged = true;
+    }
+  }
+
+  private titleText(): string {
+    return `Open ${this.name} in Grok Bot${this.outdated ? " · its Desk Pet skill is out of date" : ""}`;
+  }
+
+  /** When the next frame could look different (the render loop sleeps until then). */
+  nextFrameAt(now: number): number {
+    if (!this.clock) return now;
+    return nextChangeAt({ ...this.clock, now, toastUntil: this.toastMsg?.until });
   }
 
   /** Newest message replaces the previous one; one toast per pet (shown on the next frame). */
@@ -278,12 +304,14 @@ export class Pet {
     this.setMode("avatar", g.backing);
     if (strip === "pending") {
       this.paintIf("pending", () => this.paint.clearRect(0, 0, g.backing, g.backing));
+      this.clock = null; // art still loading: keep ticking
       return true;
     }
     const t = now - this.anim.start;
     if (want === "done" && t >= AVATAR_DONE_MS) this.playedDoneSeq = this.doneSeq;
     const cue = Pet.reducedMotion ? calmCue(avatarCue(want, t, g)) : avatarCue(want, t, g);
     const face = this.face.frameAt(cue.face, now);
+    this.clock = { art: "avatar", state: want, now, animStart: this.anim.start, faceUntil: this.face.nextChangeAt };
     const key = `avatar|${g.backing}|${g.res}|${av.shape}|${colorHex(av.color, art.palette)}|${face}|${JSON.stringify(cue)}`;
     this.paintIf(key, () => drawAvatar(this.paint, strip, g, face, cue));
     return true;
@@ -294,7 +322,10 @@ export class Pet {
   }
 
   draw(bank: SpriteBank, now: number, cfg: DeskPetConfig, offline: boolean): void {
-    if (!this.slot) return;
+    if (!this.slot) {
+      this.clock = null;
+      return;
+    }
     const want = this.renderState(now, cfg, offline);
     if (want !== this.anim.state) this.anim = { state: want, start: now };
     if (this.el.dataset.state !== want) this.el.dataset.state = want;
@@ -323,7 +354,11 @@ export class Pet {
   private drawRobotFrame(bank: SpriteBank, want: AnimState, now: number): void {
     this.setMode("robot", 32);
     const def = bank.defs[want];
-    if (!def) return;
+    if (!def) {
+      this.clock = null;
+      return;
+    }
+    this.clock = { art: "robot", state: want, now, animStart: this.anim.start, robotFps: def.fps };
     let frame = Math.floor(((now - this.anim.start) * def.fps) / 1000);
     if (def.loop) frame %= def.frames;
     else if (frame >= def.frames) {

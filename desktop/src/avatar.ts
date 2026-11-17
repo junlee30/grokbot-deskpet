@@ -319,6 +319,11 @@ export class FacePlayer {
     }
     return this.steps[this.i]?.slot ?? FACE.rest;
   }
+
+  /** When the current face step ends (the next face change). */
+  get nextChangeAt(): number {
+    return this.until;
+  }
 }
 
 // ---------- geometry ----------

@@ -82,3 +82,50 @@ export function samePixels(a: Uint32Array, b: Uint32Array): boolean {
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
   return true;
 }
+
+/** The render loop's fastest tick, and the longest it sleeps while nothing will change. */
+export const FRAME_MS = 32;
+export const MAX_SLEEP_MS = 1000;
+
+/** What decides when a pet's next frame can look different. */
+export interface FrameClock {
+  art: "robot" | "avatar";
+  /** The animation drawn (a PetState or "offline"). */
+  state: string;
+  now: number;
+  /** When this animation started. */
+  animStart: number;
+  /** Robot sprites: the state's frames per second. */
+  robotFps?: number;
+  /** Avatars: when the face player's current step ends. */
+  faceUntil?: number;
+  /** When the bubble's toast expires, if one is up. */
+  toastUntil?: number;
+}
+
+/** The next multiple of `period` after `t` (t >= 0). */
+const nextStep = (t: number, period: number) => (Math.floor(t / period) + 1) * period;
+
+/**
+ * When the next frame could differ from this one. Robot sprites step at their fps; resting
+ * avatars (idle, sleeping, offline) change only on the face player's schedule and their slow
+ * breathing / z steps (avatar.ts avatarCue). Anything busier is drawn every tick.
+ */
+export function nextChangeAt(c: FrameClock): number {
+  const t = Math.max(0, c.now - c.animStart);
+  let next = c.now; // as soon as possible
+  if (c.art === "robot" && c.robotFps && c.robotFps > 0) {
+    next = c.animStart + nextStep((t * c.robotFps) / 1000, 1) * (1000 / c.robotFps);
+  } else if (c.art === "avatar" && c.faceUntil !== undefined) {
+    if (c.state === "idle") next = Math.min(c.faceUntil, c.animStart + nextStep(t, 1200));
+    else if (c.state === "sleeping") next = Math.min(c.faceUntil, c.animStart + Math.min(nextStep(t, 300), nextStep(t, 1600)));
+    else if (c.state === "offline") next = c.faceUntil;
+  }
+  if (c.toastUntil !== undefined && c.toastUntil > c.now) next = Math.min(next, c.toastUntil);
+  return next;
+}
+
+/** How long the render loop waits before the next tick. */
+export function frameDelay(nextAt: number, now: number): number {
+  return Math.max(FRAME_MS, Math.min(MAX_SLEEP_MS, Math.ceil(nextAt - now)));
+}

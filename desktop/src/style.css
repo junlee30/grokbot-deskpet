@@ -500,6 +500,25 @@ button > svg {
   font-size: 12px;
 }
 
+/* A checkbox with its label (Notifications). */
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.check input {
+  margin: 0;
+  accent-color: var(--brand);
+}
+
+.check input:focus-visible {
+  outline: 3px solid var(--focus);
+}
+
 /* Segmented control (Pet size). */
 .seg {
   display: inline-flex;

@@ -25,6 +25,7 @@ chacha20poly1305 = "0.11.0"
 sha2 = "0.10"
 base64 = "0.22"
 getrandom = "0.3"
+tauri-plugin-notification = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # "Is Grok Bot installed?" (NSWorkspace URLForApplicationToOpenURL:) before a pet click opens it.

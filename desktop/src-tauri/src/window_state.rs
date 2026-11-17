@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, PhysicalPosition, WebviewWindow, WindowEvent};
+use crate::lock::Locked;
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct Saved {
@@ -84,7 +85,7 @@ pub fn track(window: &WebviewWindow) {
     window.on_window_event(move |ev| match ev {
         WindowEvent::Moved(p) => {
             let gen = {
-                let mut g = pending.lock().unwrap();
+                let mut g = pending.locked();
                 g.0 = Some(Saved { x: p.x, y: p.y });
                 g.1 += 1;
                 g.1
@@ -93,7 +94,7 @@ pub fn track(window: &WebviewWindow) {
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(400)).await;
                 let s = {
-                    let g = pending.lock().unwrap();
+                    let g = pending.locked();
                     if g.1 != gen {
                         return; // moved again since; that move will save
                     }
@@ -105,7 +106,7 @@ pub fn track(window: &WebviewWindow) {
             });
         }
         WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed => {
-            if let Some(s) = pending.lock().unwrap().0 {
+            if let Some(s) = pending.locked().0 {
                 save(&app, s);
             }
         }

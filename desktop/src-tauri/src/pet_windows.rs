@@ -25,6 +25,7 @@ use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State, We
 
 use crate::log_line;
 use crate::pets::{self, agent_of, label_for, place_new, reset_layout, resize_anchor, route_event, sane_size, Rect, Route, Store};
+use crate::lock::Locked;
 
 /// Events kept per agent for a window that is still loading (and for a reloaded one).
 const BUFFER: usize = 32;
@@ -43,6 +44,8 @@ pub struct Inner {
     save_gen: u64,
     /// Agents already logged as over the window cap (logged once each).
     dropped: HashSet<String>,
+    /// Agents whose pet is showing needs_you (the menu bar icon shows how many).
+    needing: HashSet<String>,
 }
 
 pub struct PetWindows(Mutex<Inner>);
@@ -58,6 +61,7 @@ impl Default for PetWindows {
             status: json!({"status": "connecting"}),
             save_gen: 0,
             dropped: HashSet::new(),
+            needing: HashSet::new(),
         }))
     }
 }
@@ -71,7 +75,7 @@ pub fn init(app: &AppHandle) {
     let name = if selftest_agents().is_some() { "pets-selftest.json" } else { "pets.json" };
     let path = app.path().app_config_dir().ok().map(|d| d.join(name));
     let store = path.as_ref().and_then(|p| std::fs::read(p).ok()).map(|b| Store::from_json(&b)).unwrap_or_default();
-    let mut g = state(app).0.lock().unwrap();
+    let mut g = state(app).0.locked();
     g.store = store;
     g.path = path;
 }
@@ -89,7 +93,7 @@ fn write_store(path: Option<PathBuf>, bytes: Vec<u8>) {
 
 fn save_now(app: &AppHandle) {
     let (path, bytes) = {
-        let g = state(app).0.lock().unwrap();
+        let g = state(app).0.locked();
         (g.path.clone(), g.store.to_json())
     };
     write_store(path, bytes);
@@ -98,14 +102,14 @@ fn save_now(app: &AppHandle) {
 /// Write the store 400 ms after the last change (a drag moves the window many times).
 fn schedule_save(app: &AppHandle) {
     let gen = {
-        let mut g = state(app).0.lock().unwrap();
+        let mut g = state(app).0.locked();
         g.save_gen += 1;
         g.save_gen
     };
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_millis(400)).await;
-        if state(&app).0.lock().unwrap().save_gen == gen {
+        if state(&app).0.locked().save_gen == gen {
             save_now(&app);
         }
     });
@@ -139,7 +143,8 @@ fn monitors(app: &AppHandle) -> (Vec<Rect>, Vec<Rect>) {
 }
 
 /// For commands only the main (pairing + settings) window may use: pet windows show
-/// bot-supplied text.
+/// bot-supplied text, so they get only what a pet needs (pet_init, pet_menu, pet_attention,
+/// open_settings_window, grokbot_installed).
 pub fn require_main(window: &WebviewWindow) -> Result<(), String> {
     if window.label() == "main" {
         Ok(())
@@ -153,14 +158,14 @@ pub fn require_main(window: &WebviewWindow) -> Result<(), String> {
 /// Mailbox status (online/offline/connecting): kept for windows that open later. The event
 /// itself is broadcast to every window by the caller.
 pub fn set_status(app: &AppHandle, status: Value) {
-    state(app).0.lock().unwrap().status = status;
+    state(app).0.locked().status = status;
 }
 
 /// A decrypted, validated state event: open the agent's window or send it there.
 pub fn on_state(app: &AppHandle, v: Value) {
     let Some(agent) = v.get("agent_id").and_then(Value::as_str).map(str::to_owned) else { return };
     let route = {
-        let mut g = state(app).0.lock().unwrap();
+        let mut g = state(app).0.locked();
         let r = route_event(&g.open, &agent, pets::MAX_PET_WINDOWS);
         match r {
             Route::Ignore => {
@@ -195,7 +200,7 @@ fn create(app: &AppHandle, agent: &str) {
     let Some(label) = label_for(agent) else { return };
     let (bounds, work) = monitors(app);
     let (pos, size) = {
-        let mut g = state(app).0.lock().unwrap();
+        let mut g = state(app).0.locked();
         let size = g.size;
         let pos = place_new(g.store.get(agent), size, &bounds, &work, &g.store.others(agent, size));
         g.store.set(agent, pos);
@@ -224,12 +229,12 @@ fn create(app: &AppHandle, agent: &str) {
     match built {
         Ok(w) => {
             track(&w, agent.to_string());
-            let n = state(app).0.lock().unwrap().open.len();
+            let n = state(app).0.locked().open.len();
             log_line(app, &format!("pet window opened: agent={agent} at ({},{}) {}x{} (open: {n})", pos.0, pos.1, size.0, size.1));
         }
         Err(e) => {
             {
-                let mut g = state(app).0.lock().unwrap();
+                let mut g = state(app).0.locked();
                 g.open.retain(|a| a != agent);
                 g.buffers.remove(agent);
             }
@@ -246,15 +251,17 @@ fn track(w: &WebviewWindow, agent: String) {
         WindowEvent::Moved(p) => {
             let sf = app.get_webview_window(&label).and_then(|w| w.scale_factor().ok()).unwrap_or(1.0);
             let pos = ((p.x as f64 / sf).round() as i32, (p.y as f64 / sf).round() as i32);
-            state(&app).0.lock().unwrap().store.set(&agent, pos);
+            state(&app).0.locked().store.set(&agent, pos);
             schedule_save(&app);
         }
         WindowEvent::Destroyed => {
             {
-                let mut g = state(&app).0.lock().unwrap();
+                let mut g = state(&app).0.locked();
                 g.open.retain(|a| a != &agent);
                 g.buffers.remove(&agent);
+                g.needing.remove(&agent);
             }
+            sync_tray_count(&app);
             save_now(&app);
         }
         _ => {}
@@ -264,11 +271,13 @@ fn track(w: &WebviewWindow, agent: String) {
 /// Close every pet window (unpair, new code). Saved positions stay.
 pub fn close_all(app: &AppHandle) {
     let agents: Vec<String> = {
-        let mut g = state(app).0.lock().unwrap();
+        let mut g = state(app).0.locked();
         g.buffers.clear();
         g.dropped.clear();
+        g.needing.clear();
         g.open.drain(..).collect()
     };
+    sync_tray_count(app);
     for a in &agents {
         if let Some(w) = label_for(a).and_then(|l| app.get_webview_window(&l)) {
             let _ = w.destroy();
@@ -283,7 +292,7 @@ pub fn close_all(app: &AppHandle) {
 /// Forget every saved position and line the open pets up along the bottom-right again.
 pub fn reset_positions(app: &AppHandle) {
     let (agents, size) = {
-        let mut g = state(app).0.lock().unwrap();
+        let mut g = state(app).0.locked();
         g.store.clear();
         (g.open.clone(), g.size)
     };
@@ -292,7 +301,7 @@ pub fn reset_positions(app: &AppHandle) {
         if let Some(w) = label_for(&agent).and_then(|l| app.get_webview_window(&l)) {
             let _ = w.set_position(LogicalPosition::new(pos.0, pos.1));
         }
-        state(app).0.lock().unwrap().store.set(&agent, pos);
+        state(app).0.locked().store.set(&agent, pos);
     }
     save_now(app);
     log_line(app, &format!("pet positions reset ({} open)", agents.len()));
@@ -347,13 +356,73 @@ pub fn tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// The menu bar icon's title and tooltip: how many bots need you (nothing when none do).
+pub fn tray_count_text(n: usize) -> (Option<String>, String) {
+    match n {
+        0 => (None, "Desk Pet".into()),
+        1 => (Some("1".into()), "Desk Pet · 1 bot needs you".into()),
+        n => (Some(n.to_string()), format!("Desk Pet · {n} bots need you")),
+    }
+}
+
+fn sync_tray_count(app: &AppHandle) {
+    let n = state(app).0.locked().needing.len();
+    if let Some(tray) = app.tray_by_id("deskpet") {
+        let (title, tip) = tray_count_text(n);
+        let _ = tray.set_title(title);
+        let _ = tray.set_tooltip(Some(tip));
+    }
+}
+
+/// One line of bot-supplied text, cut to `max` characters, for a notification.
+fn one_line(s: &str, max: usize) -> String {
+    let t: String = s.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    let t = t.split_whitespace().collect::<Vec<_>>().join(" ");
+    if t.chars().count() > max {
+        t.chars().take(max - 1).chain(std::iter::once('…')).collect()
+    } else {
+        t
+    }
+}
+
+fn notify_needs_you(app: &AppHandle, name: &str, message: Option<&str>) {
+    use tauri_plugin_notification::NotificationExt;
+    let name = one_line(name, 64);
+    let body = message.map(|m| one_line(m, 160)).filter(|m| !m.is_empty()).unwrap_or_else(|| "Waiting for you in Grok Bot".into());
+    if let Err(e) = app.notification().builder().title(format!("{name} needs you")).body(body).show() {
+        log_line(app, &format!("notification failed: {e}"));
+    }
+}
+
 // ---------------------------------------------------------------- commands
+
+/// A pet started or stopped showing needs_you. `notify`: the pet window decided this one is
+/// fresh and the user wants notifications (Settings). Counts feed the menu bar icon.
+#[tauri::command]
+pub fn pet_attention(app: AppHandle, window: WebviewWindow, needs: bool, notify: bool, name: String, message: Option<String>) -> Result<(), String> {
+    let agent = agent_of(window.label()).ok_or("not a pet window")?.to_string();
+    let changed = {
+        let mut g = state(&app).0.locked();
+        if needs {
+            g.needing.insert(agent)
+        } else {
+            g.needing.remove(&agent)
+        }
+    };
+    if changed {
+        sync_tray_count(&app);
+    }
+    if needs && notify {
+        notify_needs_you(&app, &name, message.as_deref());
+    }
+    Ok(())
+}
 
 /// A pet window starting up: which agent it is, the events so far, the mailbox status.
 #[tauri::command]
 pub fn pet_init(window: WebviewWindow, st: State<'_, PetWindows>) -> Result<Value, String> {
     let agent = agent_of(window.label()).ok_or("not a pet window")?.to_string();
-    let g = st.0.lock().unwrap();
+    let g = st.0.locked();
     let events: Vec<Value> = g.buffers.get(&agent).map(|b| b.iter().cloned().collect()).unwrap_or_default();
     Ok(json!({"agent_id": agent, "events": events, "status": g.status}))
 }
@@ -365,7 +434,7 @@ pub fn pets_set_size(app: AppHandle, window: WebviewWindow, width: i32, height: 
     require_main(&window)?;
     let size = sane_size(width, height);
     let moves: Vec<(String, (i32, i32))> = {
-        let mut g = state(&app).0.lock().unwrap();
+        let mut g = state(&app).0.locked();
         if g.size == size {
             return Ok(());
         }
@@ -383,7 +452,7 @@ pub fn pets_set_size(app: AppHandle, window: WebviewWindow, width: i32, height: 
             let _ = w.set_size(LogicalSize::new(size.0, size.1));
             let _ = w.set_position(LogicalPosition::new(pos.0, pos.1));
         }
-        state(&app).0.lock().unwrap().store.set(&agent, pos);
+        state(&app).0.locked().store.set(&agent, pos);
     }
     schedule_save(&app);
     Ok(())
@@ -397,8 +466,10 @@ pub fn pets_close_all(app: AppHandle, window: WebviewWindow) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub fn pets_reset_positions(app: AppHandle) {
+pub fn pets_reset_positions(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+    require_main(&window)?;
     reset_positions(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -414,8 +485,10 @@ pub fn pet_menu(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn app_quit(app: AppHandle) {
+pub fn app_quit(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+    require_main(&window)?;
     app.exit(0);
+    Ok(())
 }
 
 // ---------------------------------------------------------------- self-test (debug builds)
@@ -467,7 +540,7 @@ pub fn selftest(app: &AppHandle) {
 
 /// One log line per pet window with where the OS says it is (logical points).
 fn log_windows(app: &AppHandle, tag: &str) {
-    let agents = state(app).0.lock().unwrap().open.clone();
+    let agents = state(app).0.locked().open.clone();
     for a in &agents {
         let Some(w) = label_for(a).and_then(|l| app.get_webview_window(&l)) else {
             log_line(app, &format!("{tag}: agent={a} has no window"));
@@ -487,6 +560,15 @@ fn log_windows(app: &AppHandle, tag: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tray_count_and_notification_text() {
+        assert_eq!(tray_count_text(0), (None, "Desk Pet".to_string()));
+        assert_eq!(tray_count_text(1).0.as_deref(), Some("1"));
+        assert!(tray_count_text(3).1.ends_with("3 bots need you"));
+        assert_eq!(one_line("  a\n\tb  ", 10), "a b");
+        assert_eq!(one_line(&"é".repeat(200), 160).chars().count(), 160);
+    }
 
     #[test]
     fn tray_icon_is_a_black_template_at_18pt_2x() {

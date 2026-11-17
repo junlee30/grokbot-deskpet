@@ -84,6 +84,10 @@ app.innerHTML = `
           </div>
         </div>
         <div class="row">
+          <span class="label">Notifications</span>
+          <div class="value"><label class="check"><input type="checkbox" id="s-notify" /><span>Notify me when a bot needs me</span></label></div>
+        </div>
+        <div class="row">
           <span class="label">Positions</span>
           <div class="value"><button type="button" class="small" id="s-reset-pos">Reset Pet Positions</button></div>
           <div class="note" id="s-reset-note"></div>
@@ -311,6 +315,7 @@ async function openSettings(): Promise<void> {
   $("s-mailbox-note").textContent = "Used for the next new code.";
   $("s-mailbox-note").classList.remove("error");
   for (const r of sizeRadios()) r.checked = r.value === cfg.petSize;
+  $<HTMLInputElement>("s-notify").checked = cfg.notifyNeedsYou;
   $("s-reset-note").textContent = "";
   disarm($<HTMLButtonElement>("s-v2-new"), "New code");
   disarm($<HTMLButtonElement>("s-v2-unpair"), "Unpair");
@@ -344,6 +349,7 @@ async function saveSettingsFromForm(): Promise<void> {
   saveSettings({
     mailboxUrl: mb.url,
     petSize: size === "small" ? "small" : "large",
+    notifyNeedsYou: $<HTMLInputElement>("s-notify").checked,
   });
   cfg = await loadConfig();
   await applyPetSize();
