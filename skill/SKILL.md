@@ -1,11 +1,11 @@
 ---
 name: desk-pet
-description: Show this Grok Bot as a pixel-art pet on the user's desktop, drawn as its own Grok Bot profile picture (avatarShape/avatarColor); clicking the pet opens this bot's chat in the Grok Bot app. Use when the user says "Install the Desk Pet skill and pair with code dp2.…" to pair once (private, end-to-end encrypted mailbox), and during every turn to post short lifecycle status (thinking, working, juggling, needs_you, done, error). Old v1 codes like "K7Q-42M" are deprecated: tell the user to make a new code in Desk Pet (⚙ → Pair). Never sends prompts, replies, tool arguments, file contents or secrets.
+description: Show this Grok Bot as a pixel-art pet on the user's desktop, drawn as its own Grok Bot profile picture (avatarShape/avatarColor); clicking the pet opens this bot's chat in the Grok Bot app. Use when the user says "Install the Desk Pet skill and pair with code dp2.…" to pair once (private, end-to-end encrypted mailbox), and during every turn to post short lifecycle status (thinking, working, juggling, needs_you, done, error). Never sends prompts, replies, tool arguments, file contents or secrets.
 ---
 
 # Desk Pet
 
-The user runs a small desktop app ("Desk Pet for Grok Bot", unofficial, working title) that
+The user runs a small desktop app ("Desk Pet", for Grok Bot; unofficial, not made by xAI) that
 shows one pixel-art pet per Grok Bot and animates it from status updates. Each pet looks like
 that bot's own Grok Bot profile picture (its avatar shape in its avatar colour) when the bot
 sends its `avatar`; otherwise it is a generic robot. Clicking a pet opens the Grok Bot desktop
@@ -16,9 +16,6 @@ encrypt each status with a key from the code and post it to a random topic on
 [ntfy.sh](https://ntfy.sh) (or the user's own ntfy server); the desktop app subscribes and
 decrypts. There is no Desk Pet server; the mailbox only sees ciphertext.
 
-Codes like `K7Q-42M` (`XXX-XXX`) are from the old **v1 relay, which is deprecated**. Don't pair
-with them: see section 7.
-
 Status is best-effort decoration. **It must never slow down, block or break your real work.**
 Every post gives up after about 3 seconds and ignores failures.
 
@@ -26,24 +23,22 @@ Every post gives up after about 3 seconds and ignores failures.
 
 Trigger: the user says something like
 `Install the Desk Pet skill and pair with code dp2.AgAB…` (one long word starting `dp2.`).
-If the code looks like `XXX-XXX` instead (e.g. `K7Q-42M`), it is a deprecated v1 code: don't
-install or pair anything, follow section 7.
 
 **The dp2 code is a secret** (it contains the encryption key). Never echo it back, never put it
 in a file other than the one below, in memory notes, in chat, or on a process command line.
 
-1. Pick a stable `agent_id` for yourself: lowercase `[a-z0-9_-]`, max 64 characters, e.g.
-   `jarvis`. Use your display name as `agent_name` (max 64), e.g. `Jarvis`.
-2. Install the publisher once per computer. It is the file `deskpet-publish` next to this
-   SKILL.md (a single Node.js script, standard library only; needs `node` 12 or newer and
-   uses `curl` when present). All bots on this computer share it:
+1. Install (or update) the publisher. It is the file `deskpet-publish` next to this SKILL.md
+   (a single Node.js script, standard library only; needs `node` 12 or newer and uses `curl`
+   when present). All bots on this computer share it. Run this **at the start of every
+   session** too, so a newer copy of this skill updates it:
 
    ```bash
    mkdir -p ~/.deskpet && chmod 700 ~/.deskpet
-   install -m 700 "<this skill's folder>/deskpet-publish" ~/.deskpet/deskpet-publish
+   cmp -s "<this skill's folder>/deskpet-publish" ~/.deskpet/deskpet-publish ||
+     install -m 700 "<this skill's folder>/deskpet-publish" ~/.deskpet/deskpet-publish
    ```
 
-3. Pair: give it the code on **stdin** (a shell builtin like `printf` doesn't show up in `ps`):
+2. Pair: give it the code on **stdin** (a shell builtin like `printf` doesn't show up in `ps`):
 
    ```bash
    printf '%s' 'dp2.PASTE-THE-CODE-HERE' | ~/.deskpet/deskpet-publish pair
@@ -53,73 +48,45 @@ in a file other than the one below, in memory notes, in chat, or on a process co
    it prints `Paired with Desk Pet (mailbox ntfy.sh).` and nothing secret. A mistyped or cut-off
    code fails with exit code 1 and `pairing code checksum mismatch` (ask the user to copy it
    again). Pairing again with a new code replaces the old one for every bot on this computer.
-4. Say hello, so the pet appears right away:
+3. Set yourself up (once, see section 2), then say hello so the pet appears right away:
 
    ```bash
-   ~/.deskpet/deskpet-publish jarvis Jarvis idle paired "Paired" \
-     --avatar blob/black --grokbot-id 2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4e5f >/dev/null 2>&1 || true
+   ~/.deskpet/deskpet-publish init jarvis --profile "$PROFILE"
+   ~/.deskpet/deskpet-publish --bot jarvis idle paired "Paired" >/dev/null 2>&1 || true
    ```
 
-   (`--avatar` and `--grokbot-id`: see section 2, and use your own values; leave either out if
-   you don't have it.)
-5. Confirm to the user **without echoing the code**, e.g.
+4. Confirm to the user **without echoing the code**, e.g.
    "Paired with Desk Pet. I'll show up on your desktop as Jarvis."
 
-`~/.deskpet/deskpet-publish status` prints `paired (mailbox <host>)` or `not paired`.
+`~/.deskpet/deskpet-publish status` prints `paired (mailbox <host>)` or `not paired`;
+`~/.deskpet/deskpet-publish bots` lists the bots set up on this computer.
 
-## 2. Your avatar (profile picture) and your Grok Bot id
+## 2. Setting yourself up: `init`
 
-Your Grok Bot profile is `/home/box/agent-data/agents/<uuid>/profile.json`. Two things come
-from it; read them once per session and send them with **every** status post.
+Pick a stable `agent_id` for yourself: lowercase `[a-z0-9_-]`, max 64 characters, e.g.
+`jarvis`. It names your pet on this computer; other bots here pick their own.
 
-### Your Grok Bot id (`grokbot_id`): makes a click open your chat
-
-The `<uuid>` folder that holds **your own** `profile.json` is your Grok Bot agent id, e.g.
-`2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4e5f`. When you send it, clicking your pet opens the Grok Bot
-desktop app on your chat (`grokbot://app/v1/agent?id=<uuid>`). Without it, a click only brings
-Grok Bot to the front.
+Your Grok Bot profile is `/home/box/agent-data/agents/<uuid>/profile.json`. Pass **your own**
+(the folder whose `profile.json` is yours; other bots on this computer have folders next to
+it) to `init`:
 
 ```bash
-# PROFILE = path to your own profile.json (/home/box/agent-data/agents/<uuid>/profile.json)
-DESK_PET_GROKBOT_ID="$(basename "$(dirname "$PROFILE")" \
-  | grep -ixE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' || true)"
-export DESK_PET_GROKBOT_ID
+~/.deskpet/deskpet-publish init jarvis --profile /home/box/agent-data/agents/<uuid>/profile.json
+# Set up jarvis ("Jarvis", avatar blob/black, Grok Bot id 2f06d68c-…).
 ```
 
-- Use **your own** folder, the one whose `profile.json` is yours (the same file you take your
-  avatar from). Other bots on this computer have their own folders next to it; never send
-  theirs, or a click on your pet would open another bot's chat. If you can't tell which folder
-  is yours, send no id.
-- `deskpet-publish` reads `DESK_PET_GROKBOT_ID` from the environment, or takes
-  `--grokbot-id <uuid>`. It must be a UUID (it is lowercased); anything else is dropped and
-  the status is sent without it. The desktop app checks it again.
-- It is not a secret and not personal data, only the id of your bot. Never send the user's
-  id, a session or chat id, or a URL here.
+`init` takes from that profile, and re-reads on every post (so profile changes show up):
 
-### Your avatar
+- your **name** (`name`): the pet's name tag. To use another, give it after the id:
+  `init jarvis "J.A.R.V.I.S." --profile …`.
+- your **avatar** (`avatarShape`, `avatarColor`): the pet is drawn as your profile picture.
+  Only these names are sent, never an image or `avatarPngBase64`.
+- your **Grok Bot id** (the `<uuid>` folder name): clicking your pet opens your chat in the
+  Grok Bot app. It is only your bot's id: not a secret, not personal data.
 
-`profile.json` has `avatarShape` and `avatarColor`, so the pet looks like you. Send the names
-exactly as in your profile (lowercase), for example:
-
-```bash
-DESK_PET_AVATAR="$(jq -c '{shape: .avatarShape, color: .avatarColor}
-  | select((.shape|type)=="string" and (.color|type)=="string")
-  | {shape: (.shape|ascii_downcase), color: (.color|ascii_downcase)}' "$PROFILE" 2>/dev/null || true)"
-```
-
-`deskpet-publish` reads `DESK_PET_AVATAR` (this JSON) from the environment, or takes
-`--avatar <shape>/<color>` (e.g. `--avatar blob/black`). Values not on the lists are dropped.
-
-Allowed values (anything else is rejected):
-
-- `shape`: `arch bean blob capsule cloud clover crystal cylinder dome egg flower gem heart hex
-  house leaf pebble pumpkin shield sparkle square squircle star tablet teardrop wedge`
-- `color`: `black brown red orange yellow green cyan blue violet magenta gray`
-
-If your profile has no avatar, or a value that isn't on these lists, leave `DESK_PET_AVATAR`
-empty and send no avatar (you show up as the robot). The avatar is not secret, but it is only
-names: never send an image, a URL or `avatarPngBase64`. If the user changes your avatar, re-read
-it; the pet keeps the latest one per bot.
+If you can't tell which profile is yours, run `init jarvis Jarvis` without `--profile` (you
+show up as a robot and a click only brings Grok Bot to the front). `--avatar <shape>/<color>`
+and `--grokbot-id <uuid>` set those by hand; values that aren't valid are dropped.
 
 ## 3. When to post which state
 
@@ -142,9 +109,12 @@ Notes:
   is plenty.
 - **Budget:** the free ntfy.sh mailbox allows about **250 messages per day per IP address**,
   shared by every bot on this computer. `deskpet-publish` helps: it drops a `heartbeat` that
-  comes less than 4 minutes after the last post of the same state in that session, drops an
-  exact repeat within 10 seconds, and after a `429` (limit reached) stays quiet for 15 minutes.
-  Still, prefer fewer posts: state changes plus a heartbeat every ~5 minutes.
+  comes less than 4 minutes after the last post of the same state in that session, drops a
+  busy state (`thinking`, `working`, `juggling`) repeated within 15 seconds, and after a `429`
+  (limit reached) stays quiet for 15 minutes (the pet is told how many posts were lost).
+  Still, prefer fewer posts: state changes plus a heartbeat every ~5 minutes. If the user
+  gives you an ntfy access token for a paid or self-hosted ntfy, store it with
+  `printf '%s' 'tk_…' | ~/.deskpet/deskpet-publish token` (never echo it).
 - A `working`/`thinking`/`juggling` state with no update for 10 minutes is shown as idle, so
   send heartbeats during long work.
 - After `done`, the pet celebrates once and settles to idle. It falls asleep by itself later,
@@ -156,9 +126,8 @@ Notes:
 desk_pet() {  # usage: desk_pet <state> <event> [message]
   # Private mailbox (end-to-end encrypted; fails open, ~3 s max, prints nothing).
   [ -x "$HOME/.deskpet/deskpet-publish" ] && [ -f "$HOME/.deskpet/pairing" ] || return 0
-  DESK_PET_SESSION="${DESK_PET_SESSION:-default}" DESK_PET_AVATAR="${DESK_PET_AVATAR:-}" \
-  DESK_PET_GROKBOT_ID="${DESK_PET_GROKBOT_ID:-}" \
-    "$HOME/.deskpet/deskpet-publish" jarvis Jarvis "$@" >/dev/null 2>&1 || true
+  DESK_PET_SESSION="${DESK_PET_SESSION:-default}" \
+    "$HOME/.deskpet/deskpet-publish" --bot jarvis "$@" >/dev/null 2>&1 || true
   return 0
 }
 
@@ -168,15 +137,8 @@ desk_pet needs_you waiting "Need your approval to continue"
 desk_pet done turn_end
 ```
 
-Replace `jarvis` / `Jarvis` with your own `agent_id` and `agent_name`, and set
-`DESK_PET_AVATAR` and `DESK_PET_GROKBOT_ID` from your own profile first (section 2). The same
-call with options instead of the environment:
-
-```bash
-~/.deskpet/deskpet-publish jarvis Jarvis working tool_start "Running the test suite" \
-  --session "$DESK_PET_SESSION" --avatar blob/black \
-  --grokbot-id 2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4e5f >/dev/null 2>&1 || true
-```
+Replace `jarvis` with your own `agent_id` (the one you gave `init`). Everything else about you
+(name, avatar, Grok Bot id) comes from your `init` profile.
 
 Rules for this call:
 
@@ -189,8 +151,9 @@ Rules for this call:
 - **Never run with `set -x`** (or any shell tracing or verbose curl, `-v`).
 - What gets sent, inside the encryption: `agent_id`, `agent_name`, `session`, `state`,
   `event`, `message` (optional), `ts` (ISO-8601), `avatar` (optional), `grokbot_id`
-  (optional, your Grok Bot agent UUID) and `seq` (added by
-  `deskpet-publish`; it rises with every post so the pet can drop replays).
+  (optional, your Grok Bot agent UUID), `seq` (it rises with every post so the pet can drop
+  replays), `pv` (the publisher's version, so the pet can ask for an update) and `dropped`
+  (only after a rate limit: how many posts were lost). `deskpet-publish` adds the last three.
 
 ## 5. The `message` field: privacy rules
 
@@ -225,16 +188,9 @@ When in doubt, omit `message`.
 
 Desk Pet is an unofficial side project, not an xAI product.
 
-## 7. Old v1 codes (`XXX-XXX`): deprecated
+## 7. Updates and old codes
 
-The v1 relay is deprecated and the hosted relay has been shut down. If the user gives you a code
-like `K7Q-42M` (three letters/digits, a dash, three more; case and a missing dash don't
-matter), **don't** try to pair, don't call any relay, and don't install anything. Tell them,
-for example:
-
-> That's an old v1 Desk Pet code. v1 is deprecated and its relay is gone. In Desk Pet, click
-> ⚙ → **Pair** to make a new code (it starts with `dp2.`), and send me that line.
-
-If this computer still has v1 secrets from an earlier pairing (`DESK_PET_TOKEN`,
-`DESK_PET_RELAY_URL`), delete them from your secret store and stop using them. (`deskpet-publish
-pair` also refuses v1 codes with the same advice.)
+- If the pet says your publisher is out of date, run step 1 of section 1 again.
+- Codes like `K7Q-42M` (`XXX-XXX`) are from an old version of Desk Pet that no longer works.
+  Don't pair or install anything: ask the user to click ⚙ → **Pair** in Desk Pet for a new
+  code (it starts with `dp2.`).
