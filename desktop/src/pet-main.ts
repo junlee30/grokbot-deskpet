@@ -42,6 +42,30 @@ function relayout(): void {
   if (!pet) return;
   const [slot] = layoutPets(1, window.innerWidth, window.innerHeight, cfg.petSize);
   pet.place(slot ?? null);
+  alignGear();
+}
+
+/**
+ * Keep the hover ⚙ on the name tag's centre line, just to its right. The tag's position depends
+ * on pet size and layout, so it's measured rather than hard-coded; only writes when it moves.
+ */
+const gear = document.getElementById("gear") as HTMLButtonElement;
+let gearPos = "";
+function alignGear(): void {
+  const tag = pet?.el.querySelector<HTMLElement>(".name");
+  if (!tag) return;
+  const r = tag.getBoundingClientRect();
+  if (!r.height) return;
+  const size = gear.offsetHeight || 18;
+  const left = Math.min(Math.round(r.right + 6), window.innerWidth - size - 2);
+  const top = Math.round(r.top + r.height / 2 - size / 2);
+  const key = `${left},${top}`;
+  if (key === gearPos) return;
+  gearPos = key;
+  gear.style.left = `${left}px`;
+  gear.style.top = `${top}px`;
+  gear.style.right = "auto";
+  gear.style.bottom = "auto";
 }
 window.addEventListener("resize", relayout);
 
@@ -109,8 +133,10 @@ app.addEventListener("contextmenu", (ev) => {
 document.getElementById("gear")!.addEventListener("click", () => void invokeCmd("open_settings_window"));
 
 // ---------- render loop ----------
+let gearTick = 0;
 function frame(): void {
   pet?.draw(bank, Date.now(), cfg, offline);
+  if (++gearTick % 16 === 0) alignGear(); // ~2x a second: follows name/size changes cheaply
 }
 
 async function boot(): Promise<void> {
