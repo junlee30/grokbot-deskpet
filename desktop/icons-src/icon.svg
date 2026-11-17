@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!--
+    Desk Pet app icon. Original art, under the repo's Apache-2.0 licence.
+    A white pup peeks over the edge of a desk: floppy ears, two slanted pill eyes, paws on the
+    edge, a little head tilt and a wagging tail.
+    macOS icon grid: 824 x 824 tile at (100, 100), corner radius 185. One accent: the desk.
+    Regenerate every size with scripts/build-icons.sh.
+  -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b2c32"/>
+      <stop offset="1" stop-color="#121215"/>
+    </linearGradient>
+    <clipPath id="tile-clip"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#tile)"/>
+  <g clip-path="url(#tile-clip)">
+    <g transform="rotate(-6 512 740)">
+      <!-- wagging tail, behind the head -->
+      <path d="M720 742 C 772 700 806 650 790 590" fill="none" stroke="#f5f4f0" stroke-width="46" stroke-linecap="round"/>
+      <!-- head -->
+      <ellipse cx="512" cy="612" rx="252" ry="236" fill="#f5f4f0"/>
+      <!-- floppy ears, hanging over the sides of the head -->
+      <path d="M378 404 C 300 392 254 444 248 532 C 242 616 262 690 308 702 C 350 712 372 668 382 604 C 392 540 400 470 378 404 Z" fill="#b5b1a9"/>
+      <path d="M646 404 C 724 392 770 444 776 532 C 782 616 762 690 716 702 C 674 712 652 668 642 604 C 632 540 624 470 646 404 Z" fill="#b5b1a9"/>
+      <!-- eyes -->
+      <rect x="418" y="528" width="60" height="128" rx="30" fill="#131316" transform="rotate(-14 448 592)"/>
+      <rect x="548" y="528" width="60" height="128" rx="30" fill="#131316" transform="rotate(-14 578 592)"/>
+    </g>
+    <!-- the desk: the one accent colour -->
+    <rect x="60" y="740" width="904" height="260" fill="#ff8a3d"/>
+    <!-- paws resting on the edge -->
+    <rect x="352" y="700" width="128" height="80" rx="40" fill="#f5f4f0"/>
+    <rect x="544" y="700" width="128" height="80" rx="40" fill="#f5f4f0"/>
+  </g>
+</svg>

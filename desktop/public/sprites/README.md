@@ -3,7 +3,7 @@
 Original pixel art generated entirely from code by `desktop/art/build-sprites.mjs`
 (`npm run sprites` in `desktop/`, no dependencies). The same script also writes
 `desktop/art/preview.png` (every frame of every state at 4×, on light and dark backgrounds, in
-teal/orange/violet) and `desktop/art/icon-1024.png` (the app icon source). Hand-made art can
+teal/orange/violet). (The app icon is separate: hand-drawn SVG in `desktop/icons-src/`.) Hand-made art can
 replace these files as long as it keeps the **same filenames and layout**.
 
 ## The character

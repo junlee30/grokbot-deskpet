@@ -7,7 +7,7 @@
 //   grokbot_<state>_accent.png  accent layer, white + alpha, same frame layout.
 //                               The app tints it with the per-bot accent colour.
 //   manifest.json               frame counts, fps, loop/playOnce
-// Plus desktop/art/icon-1024.png (app icon source) and desktop/art/preview.png.
+// Plus desktop/art/preview.png. (The app icon is hand-drawn SVG: desktop/icons-src/.)
 //
 // Usage: node desktop/art/build-sprites.mjs   (or `npm run sprites` in desktop/)
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -735,42 +735,5 @@ for (const [bx, by, bg, acc] of blocks) {
   );
 }
 writeFileSync(join(HERE, "preview.png"), encodePng(pw, ph, prev));
-
-// icon source: idle bot, teal accent, on a rounded dark-slate tile, 1024px
-{
-  const f = new Frame();
-  drawBot(f, { shadow: false }); // idle pose, no ground shadow on the tile
-  const px = composite(f, [0x2d, 0xd4, 0xbf]);
-  let x0 = FW, y0 = FH, x1 = -1, y1 = -1;
-  for (let y = 0; y < FH; y++)
-    for (let x = 0; x < FW; x++)
-      if (px[(y * FW + x) * 4 + 3] > 80) {
-        x0 = Math.min(x0, x); x1 = Math.max(x1, x);
-        y0 = Math.min(y0, y); y1 = Math.max(y1, y);
-      }
-  const N = 1024;
-  const pad = 72;
-  const R = 190;
-  const icon = Buffer.alloc(N * N * 4);
-  for (let y = pad; y < N - pad; y++)
-    for (let x = pad; x < N - pad; x++) {
-      const cx = Math.min(Math.max(x + 0.5, pad + R), N - pad - R);
-      const cy = Math.min(Math.max(y + 0.5, pad + R), N - pad - R);
-      const dd = Math.sqrt((x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2);
-      if (dd > R + 0.5) continue;
-      const t = (y - pad) / (N - 2 * pad);
-      const i = (y * N + x) * 4;
-      icon[i] = Math.round(0x34 - 0x12 * t);
-      icon[i + 1] = Math.round(0x3a - 0x12 * t);
-      icon[i + 2] = Math.round(0x4a - 0x12 * t);
-      icon[i + 3] = Math.round(255 * Math.min(1, R + 0.5 - dd)); // anti-aliased tile edge only
-    }
-  const bwid = x1 - x0 + 1, bhei = y1 - y0 + 1;
-  const sc = Math.floor(((N - 2 * pad) * 0.78) / Math.max(bwid, bhei));
-  const crop = Buffer.alloc(bwid * bhei * 4);
-  for (let y = 0; y < bhei; y++) px.copy(crop, y * bwid * 4, ((y0 + y) * FW + x0) * 4, ((y0 + y) * FW + x1 + 1) * 4);
-  blit(icon, N, crop, bwid, bhei, Math.round((N - bwid * sc) / 2), Math.round((N - bhei * sc) / 2), sc);
-  writeFileSync(join(HERE, "icon-1024.png"), encodePng(N, N, icon));
-}
 
 console.log(`wrote ${names.length} states to ${OUT}`);

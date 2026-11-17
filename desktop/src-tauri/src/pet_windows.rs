@@ -309,16 +309,13 @@ pub fn open_settings(app: &AppHandle) {
 
 // ---------------------------------------------------------------- menu + tray
 
+/// The menu bar / right-click menu, in macOS order: settings first, app-wide actions after it,
+/// Quit last in its own group. Title case; an ellipsis only where a window opens.
+pub const MENU_ITEMS: [(&str, &str); 3] = [("settings", "Settings…"), ("reset-positions", "Reset Pet Positions"), ("quit", "Quit Desk Pet")];
+
 fn menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
-    Menu::with_items(
-        app,
-        &[
-            &MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?,
-            &MenuItem::with_id(app, "reset-positions", "Reset pet positions", true, None::<&str>)?,
-            &PredefinedMenuItem::separator(app)?,
-            &MenuItem::with_id(app, "quit", "Quit Desk Pet", true, None::<&str>)?,
-        ],
-    )
+    let item = |i: usize| MenuItem::with_id(app, MENU_ITEMS[i].0, MENU_ITEMS[i].1, true, None::<&str>);
+    Menu::with_items(app, &[&item(0)?, &item(1)?, &PredefinedMenuItem::separator(app)?, &item(2)?])
 }
 
 pub fn on_menu(app: &AppHandle, id: &str) {
@@ -330,11 +327,21 @@ pub fn on_menu(app: &AppHandle, id: &str) {
     }
 }
 
+/// The menu bar icon: a black + alpha template image (icons-src/tray-template.svg, 36 px drawn at
+/// 18 pt), so macOS tints it for light, dark and highlighted menu bars.
+const TRAY_TEMPLATE: &[u8] = include_bytes!("../icons/tray-template@2x.png");
+
 /// Menu bar icon: the way back to settings when every window is a pet.
 pub fn tray(app: &AppHandle) -> tauri::Result<()> {
     let mut b = TrayIconBuilder::with_id("deskpet").tooltip("Desk Pet").menu(&menu(app)?).show_menu_on_left_click(true);
-    if let Some(icon) = app.default_window_icon() {
-        b = b.icon(icon.clone());
+    match tauri::image::Image::from_bytes(TRAY_TEMPLATE) {
+        Ok(icon) => b = b.icon(icon).icon_as_template(true),
+        Err(e) => {
+            log_line(app, &format!("menu bar template icon unreadable ({e}); using the app icon"));
+            if let Some(icon) = app.default_window_icon() {
+                b = b.icon(icon.clone());
+            }
+        }
     }
     b.build(app)?;
     Ok(())
@@ -475,4 +482,29 @@ fn log_windows(app: &AppHandle, tag: &str) {
     }
     let total = app.webview_windows().len();
     log_line(app, &format!("{tag}: {} pet windows, {total} windows in all", agents.len()));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tray_icon_is_a_black_template_at_18pt_2x() {
+        let img = tauri::image::Image::from_bytes(TRAY_TEMPLATE).expect("tray-template@2x.png decodes");
+        assert_eq!((img.width(), img.height()), (36, 36));
+        let px: Vec<&[u8]> = img.rgba().chunks(4).collect();
+        assert!(px.iter().all(|p| p[0] == 0 && p[1] == 0 && p[2] == 0), "template images are black + alpha only");
+        let opaque = px.iter().filter(|p| p[3] > 200).count();
+        let clear = px.iter().filter(|p| p[3] == 0).count();
+        assert!(opaque > 200 && clear > 300, "a silhouette, not a block: {opaque} opaque, {clear} clear");
+    }
+
+    #[test]
+    fn menu_is_in_macos_order_and_title_case() {
+        let labels: Vec<&str> = MENU_ITEMS.iter().map(|(_, l)| *l).collect();
+        assert_eq!(labels, ["Settings…", "Reset Pet Positions", "Quit Desk Pet"]);
+        // Every id is handled by on_menu.
+        let ids: Vec<&str> = MENU_ITEMS.iter().map(|(i, _)| *i).collect();
+        assert_eq!(ids, ["settings", "reset-positions", "quit"]);
+    }
 }
