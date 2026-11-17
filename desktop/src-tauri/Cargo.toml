@@ -1,7 +1,7 @@
 [package]
 name = "grokbot-deskpet"
-version = "0.2.0"
-description = "Desk Pet for Grok Bot (unofficial, working title)"
+version = "0.3.0"
+description = "Desk Pet, for Grok Bot (unofficial; not affiliated with xAI)"
 license = "Apache-2.0"
 edition = "2021"
 publish = false

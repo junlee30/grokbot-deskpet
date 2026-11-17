@@ -1,4 +1,4 @@
-// Desk Pet for Grok Bot (unofficial, working title).
+// Desk Pet, for Grok Bot (unofficial; not affiliated with xAI).
 //
 // Rust side: the main (pairing + settings) window and its position memory, one transparent
 // always-on-top window per bot (pet_windows.rs, pets.rs), the menu bar icon, the opener plugin

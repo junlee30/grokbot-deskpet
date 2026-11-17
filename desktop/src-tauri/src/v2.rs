@@ -15,7 +15,7 @@
 //!   {"v":2,"n":"<base64url 24-byte nonce>","c":"<base64url ciphertext||tag>"}
 //!
 //!   AEAD = XChaCha20-Poly1305 (libsodium's crypto_aead_xchacha20poly1305_ietf), random 192-bit
-//!   nonce per message, AAD = "deskpet-v2:" + topic. Plaintext = the v1 event JSON plus `seq`
+//!   nonce per message, AAD = "deskpet-v2:" + topic. Plaintext = the event JSON (protocol/v2.json) plus `seq`
 //!   (integer, strictly increasing per agent_id+session) and `ts` (ISO-8601), max 2048 bytes.
 //!
 //! The pairing string is a secret: it must never be logged. Nothing in here prints it.
@@ -211,7 +211,7 @@ pub const AVATAR_SHAPES: [&str; 26] = [
 pub const AVATAR_COLORS: [&str; 11] =
     ["black", "brown", "red", "orange", "yellow", "green", "cyan", "blue", "violet", "magenta", "gray"];
 
-/// A validated event from a bot (the same rules as the v1 relay's validate.ts).
+/// A validated event from a bot (rules and test cases: protocol/v2.json).
 #[derive(Debug, Clone, PartialEq)]
 pub struct BotEvent {
     pub agent_id: String,
@@ -353,8 +353,8 @@ pub fn parse_event(plaintext: &[u8]) -> Result<BotEvent, &'static str> {
 }
 
 impl BotEvent {
-    /// The `state` event JSON the UI draws from (the v1 relay's shape plus `seq`, which the UI
-    /// uses to order an agent's events across sessions).
+    /// The `state` event JSON the UI draws from: the event plus `received_at`, `via` and
+    /// `pv_outdated` (`seq` orders an agent's events across sessions).
     pub fn to_ui_json(&self, received_at_ms: i64) -> Value {
         let mut m = json!({
             "agent_id": self.agent_id,
@@ -449,7 +449,7 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
     (yoe + era * 400 + i64::from(m <= 2), m, d)
 }
 
-/// `YYYY-MM-DDTHH:MM[:SS[.fff]](Z|±HH[:]MM)` (the relay's ISO_RE) -> unix ms.
+/// `YYYY-MM-DDTHH:MM[:SS[.fff]](Z|±HH[:]MM)` -> unix ms.
 pub fn parse_iso_ms(s: &str) -> Option<i64> {
     let b = s.as_bytes();
     if b.len() < 17 || b.len() > 40 {

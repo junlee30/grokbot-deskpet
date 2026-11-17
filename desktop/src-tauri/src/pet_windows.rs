@@ -275,7 +275,7 @@ pub fn close_all(app: &AppHandle) {
         g.buffers.clear();
         g.dropped.clear();
         g.needing.clear();
-        g.open.drain(..).collect()
+        std::mem::take(&mut g.open)
     };
     sync_tray_count(app);
     for a in &agents {

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Desk Pet for Grok Bot",
-  "version": "0.2.0",
+  "productName": "Desk Pet",
+  "version": "0.3.0",
   "identifier": "dev.deskpet.grokbot",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -48,7 +48,8 @@
       "app"
     ],
     "category": "Utility",
-    "shortDescription": "Desk pet for your Grok Bots (unofficial)",
+    "shortDescription": "Desk Pet, for Grok Bot (unofficial)",
+    "longDescription": "A pixel-art pet on your desktop for each of your Grok Bots. Unofficial; not affiliated with or endorsed by xAI.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop:
+    name: Desktop (TypeScript + Rust) and publisher
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+
+      - name: Install frontend dependencies
+        working-directory: desktop
+        run: npm ci --no-audit --no-fund
+
+      - name: Frontend tests
+        working-directory: desktop
+        run: npm test
+
+      - name: Frontend build (type-check + bundle; no Grok Bot art on CI)
+        working-directory: desktop
+        run: npm run build
+
+      - name: Clippy
+        working-directory: desktop/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Rust tests
+        working-directory: desktop/src-tauri
+        run: cargo test
+
+      - name: Publisher tests
+        run: node --test skill/test/*.test.mjs
+
+      - name: Publisher compatibility smoke test
+        run: node skill/test/compat.cjs
+
+      - name: End to end (publisher → local fake ntfy → pet client)
+        run: bash scripts/e2e-v2.sh
+
+  publisher-old-node:
+    name: Publisher on Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # The oldest Node the skill promises (SKILL.md), and the oldest still-maintained LTS.
+        node: [12, 20]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: node skill/test/compat.cjs

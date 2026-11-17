@@ -1,0 +1,97 @@
+name: Release
+
+# Push a tag like v0.3.0 (it must match the version in desktop/src-tauri/tauri.conf.json) to build
+# a universal macOS .dmg and attach it to a draft GitHub release.
+#
+# Unsigned by default: the app is ad-hoc signed, so people open it the first time with
+# right-click → Open. Add the APPLE_* secrets (see docs/RELEASING.md) and the same workflow
+# signs and notarizes instead.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    env:
+      HAS_SIGNING: ${{ secrets.APPLE_CERTIFICATE != '' }}
+      # Never pick up Grok Bot's art on CI, even if a runner image ever ships the app: it is
+      # not ours to redistribute (see README, "Grok Bot avatar art").
+      GROKBOT_APP: /nonexistent
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+
+      - name: Tag matches the app version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          want="$(node -p 'require("./desktop/src-tauri/tauri.conf.json").version')"
+          [ "${GITHUB_REF_NAME#v}" = "$want" ] || { echo "tag $GITHUB_REF_NAME != app version $want"; exit 1; }
+
+      - name: Install frontend dependencies
+        working-directory: desktop
+        run: npm ci --no-audit --no-fund
+
+      - name: Build (ad-hoc signed)
+        if: env.HAS_SIGNING != 'true'
+        working-directory: desktop
+        env:
+          APPLE_SIGNING_IDENTITY: "-"
+        run: npx --yes @tauri-apps/cli@2 build --target universal-apple-darwin --bundles app,dmg
+
+      - name: Build (signed and notarized)
+        if: env.HAS_SIGNING == 'true'
+        working-directory: desktop
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npx --yes @tauri-apps/cli@2 build --target universal-apple-darwin --bundles app,dmg
+
+      - name: No Grok Bot art in the bundle
+        run: |
+          bundle=desktop/src-tauri/target/universal-apple-darwin/release/bundle
+          if [ -e desktop/public/grokbot-art ] || [ -e desktop/dist/grokbot-art ]; then
+            echo "Grok Bot art was imported on CI; refusing to publish it"; exit 1
+          fi
+          if find "$bundle" -iname '*grokbot-art*' -o -iname 'bot-*-face*.png' | grep -q .; then
+            echo "Grok Bot art found in the bundle; refusing to publish it"; exit 1
+          fi
+
+      - name: Draft GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dmg="$(ls desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg)"
+          notes="Unsigned build: the first time, right-click Desk Pet.app → Open."
+          [ "$HAS_SIGNING" = "true" ] && notes="Signed and notarized."
+          gh release create "$GITHUB_REF_NAME" "$dmg" --draft --title "Desk Pet $GITHUB_REF_NAME" --notes "$notes"
+
+      - name: Keep the build (manual runs)
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: desk-pet-macos
+          path: desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
