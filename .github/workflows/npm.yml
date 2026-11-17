@@ -41,6 +41,7 @@ jobs:
         run: |
           case "$TAG" in skill-v[0-9]*) ;; *) echo "not a skill tag: $TAG"; exit 1 ;; esac
           want="${TAG#skill-v}"
+          [ -f skill/package.json ] || { echo "$TAG has no skill/package.json (it predates the npm package; 2.2.0 was published by hand)"; exit 1; }
           pkg="$(node -p 'require("./skill/package.json").version')"
           bin="$(node skill/deskpet-publish --version)"
           [ "$pkg" = "$want" ] || { echo "skill/package.json is $pkg, tag is $TAG"; exit 1; }
