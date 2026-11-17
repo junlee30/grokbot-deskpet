@@ -413,3 +413,36 @@ button.link {
   user-select: text;
   -webkit-user-select: text;
 }
+
+/* v2: the dp2 code is one long word; let it wrap anywhere inside the paste box. */
+.paste {
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+button.link + button.link {
+  margin-left: 0;
+}
+
+/* Settings: one row per connection (v2 mailbox, v1 relay) with its actions. */
+.conn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  padding-left: 88px;
+  min-height: 20px;
+}
+
+.conn-row .small {
+  flex-basis: 100%;
+}
+
+/* The settings card scrolls; its rows must keep their height instead of shrinking into each other. */
+.settings > * {
+  flex-shrink: 0;
+}
+
+.settings label select {
+  max-width: 100%;
+}
