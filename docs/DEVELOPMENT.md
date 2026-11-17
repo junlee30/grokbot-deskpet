@@ -99,6 +99,19 @@ menu bar template from the SVGs in `desktop/icons-src/`). UI preview without a b
 `cd desktop && npm run dev`, then `http://localhost:1420/preview.html` (every pet state with
 sample bubbles) or `preview.html?controls` (the control window's views, with a fake code).
 
+## README images
+
+`docs/images/` holds the README banner (`hero.png`), the animation (`demo.gif`) and the
+GitHub social preview (`social-preview.jpg`, uploaded by hand in the repo's Settings →
+Social preview). They come from a dev-only scene, `desktop/showcase.html`
+(`npm run dev`, then `/showcase.html?mode=hero|social|gif`), with real `Pet`s drawing the
+**original robot art only**: Grok Bot's avatar art must never appear in published images.
+
+- Screenshot `hero` and `social` at 1280×640 with a device pixel ratio of 2 (Chrome DevTools
+  device toolbar); save `social` as a 1280×640 JPEG under 1 MB.
+- Screen-record `gif` for one 9-second loop, crop to the row of pets, then:
+  `ffmpeg -i demo.mp4 -vf "crop=…,fps=15,scale=980:-2:flags=lanczos,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle" -loop 0 demo.gif`
+
 ## Releasing
 
 1. Bump the version in `desktop/src-tauri/tauri.conf.json`, `desktop/src-tauri/Cargo.toml` and

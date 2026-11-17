@@ -1,0 +1,49 @@
+name: Bug report
+description: Something in Desk Pet or the bot skill doesn't work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Never paste a pairing code (`dp2.…`) or an ntfy access token here.
+        Security problems: please use [private reporting](https://github.com/junlee30/grokbot-deskpet/security/advisories/new) instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. …
+        2. …
+  - type: input
+    id: app-version
+    attributes:
+      label: Desk Pet version
+      description: Menu bar icon → Settings… (bottom of the window).
+      placeholder: "0.4.0"
+    validations:
+      required: true
+  - type: input
+    id: skill-version
+    attributes:
+      label: Skill version on the bot
+      description: Ask the bot to run `~/.deskpet/deskpet-publish --version`.
+      placeholder: "deskpet-publish 2.2.0"
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac
+      placeholder: "macOS 26.1, Apple silicon"
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: |
+        The last lines of `~/Library/Logs/dev.deskpet.grokbot/deskpet.log` (it never contains secrets).
+        `tail -50 ~/Library/Logs/dev.deskpet.grokbot/deskpet.log | pbcopy` copies them.
+      render: text

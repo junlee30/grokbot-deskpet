@@ -1,0 +1,11 @@
+name: Idea
+description: Something Desk Pet could do.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+      description: What you're trying to do, and how Desk Pet could help.
+    validations:
+      required: true
