@@ -218,6 +218,12 @@ export class Pet {
     return `Open ${this.name} in Grok Bot${this.outdated ? " · its Desk Pet skill is out of date" : ""}`;
   }
 
+  /** Forget what was painted, so the next frame repaints and re-shows everything. */
+  invalidate(): void {
+    this.paintedKey = "";
+    this.shownPixels = null;
+  }
+
   /** When the next frame could look different (the render loop sleeps until then). */
   nextFrameAt(now: number): number {
     if (!this.clock) return now;

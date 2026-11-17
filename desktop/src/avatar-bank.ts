@@ -1,6 +1,8 @@
-// DOM side of Grok Bot avatars: loads the imported art (public/grokbot-art/, gitignored, see
-// scripts/import-grokbot-art.mjs), turns strips into tinted canvases (cached per shape/res/colour)
-// and draws a frame plus its state-cue overlays. All pure logic lives in avatar.ts.
+// DOM side of Grok Bot avatars: loads the art (in the app: copied at runtime from the user's own
+// Grok Bot by src-tauri/src/grokbot_art.rs and fetched over IPC; in the browser preview:
+// public/grokbot-art/ from scripts/import-grokbot-art.mjs), turns strips into tinted canvases
+// (cached per shape/res/colour) and draws a frame plus its state-cue overlays. All pure logic
+// lives in avatar.ts.
 import {
   BADGE,
   CLOUD_DOTS,
@@ -15,6 +17,8 @@ import {
   type Overlay,
   type Palette,
 } from "./avatar.ts";
+
+import { inTauri, invokeCmd } from "./platform.ts";
 
 interface StripInfo {
   file: string;
@@ -38,6 +42,33 @@ export interface Strip {
 /** "pending" while an image loads; null when the art isn't available (use the robot). */
 export type StripResult = Strip | "pending" | null;
 
+/** Where the art comes from: the manifest, and a loadable URL for one strip file. */
+export interface ArtSource {
+  manifest(): Promise<unknown>;
+  imageUrl(file: string): Promise<string | null>;
+}
+
+/** The app: Rust copies the art from the user's Grok Bot and hands it over IPC. */
+export const ipcSource: ArtSource = {
+  manifest: () => invokeCmd<unknown>("grokbot_art_manifest"),
+  async imageUrl(file) {
+    const bytes = await invokeCmd<ArrayBuffer>("grokbot_art_file", { name: file });
+    // A blob: URL is same-origin, so the strip can be read back for tinting.
+    return bytes ? URL.createObjectURL(new Blob([bytes], { type: "image/png" })) : null;
+  },
+};
+
+/** The browser preview: files under a URL (public/grokbot-art/ via vite). */
+export function urlSource(root: string): ArtSource {
+  return {
+    manifest: async () => {
+      const r = await fetch(`${root}manifest.json`, { cache: "no-store" });
+      return r.ok ? r.json() : null;
+    },
+    imageUrl: async (file) => root + file,
+  };
+}
+
 function loadImage(src: string): Promise<HTMLImageElement | null> {
   return new Promise((resolve) => {
     const img = new Image();
@@ -47,23 +78,49 @@ function loadImage(src: string): Promise<HTMLImageElement | null> {
   });
 }
 
+/** A tinted strip's pixels, kept in JS memory: canvases can lose theirs, these can't. */
+interface Processed {
+  data: Uint8ClampedArray<ArrayBuffer>;
+  width: number;
+  height: number;
+  frameSize: number;
+  frames: number;
+}
+
 export class AvatarBank {
   manifest: ArtManifest | null = null;
-  private root = "grokbot-art/";
+  private source: ArtSource = inTauri ? ipcSource : urlSource("grokbot-art/");
   private images = new Map<string, HTMLImageElement | null | "pending">();
+  private processed = new Map<string, Processed>();
   private strips = new Map<string, Strip>();
+  /** Bumped on every load, so a strip that finishes loading for an older manifest is ignored. */
+  private generation = 0;
 
-  /** Never throws: no art just means every bot uses the robot. */
-  async load(root = "grokbot-art/"): Promise<void> {
-    this.root = root;
+  /** Never throws: no art just means every bot uses the robot. Call again when the art changes. */
+  async load(source: ArtSource = this.source): Promise<void> {
+    this.source = source;
+    const gen = ++this.generation;
+    let m: ArtManifest | null = null;
     try {
-      const r = await fetch(`${root}manifest.json`, { cache: "no-store" });
-      if (!r.ok) return;
-      const m = (await r.json()) as ArtManifest;
-      if (m && typeof m === "object" && m.shapes && typeof m.shapes === "object") this.manifest = m;
+      const v = (await source.manifest()) as ArtManifest | null;
+      if (v && typeof v === "object" && v.shapes && typeof v.shapes === "object") m = v;
     } catch {
-      this.manifest = null;
+      m = null;
     }
+    if (gen !== this.generation) return;
+    this.manifest = m;
+    this.images.clear();
+    this.processed.clear();
+    this.strips.clear();
+  }
+
+  /**
+   * Drop the tinted canvases (rebuilt from the kept pixels on next use). WebKit can discard a
+   * canvas's pixels while a window is hidden or after sleep, silently; an avatar drawn from such
+   * a canvas would be invisible, leaving only its name tag.
+   */
+  invalidate(): void {
+    this.strips.clear();
   }
 
   get palette(): Palette | null {
@@ -83,20 +140,32 @@ export class AvatarBank {
     const key = `${info.file}|${hex}`;
     const hit = this.strips.get(key);
     if (hit) return hit;
-    const img = this.images.get(info.file);
-    if (img === undefined) {
-      this.images.set(info.file, "pending");
-      void loadImage(this.root + info.file).then((i) => this.images.set(info.file, i));
-      return "pending";
+    let p = this.processed.get(key);
+    if (!p) {
+      const img = this.images.get(info.file);
+      if (img === undefined) {
+        this.images.set(info.file, "pending");
+        const gen = this.generation;
+        void this.source
+          .imageUrl(info.file)
+          .catch(() => null)
+          .then((url) => (url ? loadImage(url).finally(() => url.startsWith("blob:") && URL.revokeObjectURL(url)) : null))
+          .then((i) => {
+            if (gen === this.generation) this.images.set(info.file, i);
+          });
+        return "pending";
+      }
+      if (img === "pending") return "pending";
+      if (img === null) return null;
+      const src = document.createElement("canvas");
+      src.width = img.width;
+      src.height = img.height;
+      const sctx = src.getContext("2d", { willReadFrequently: true })!;
+      sctx.drawImage(img, 0, 0);
+      const out = processStrip(sctx.getImageData(0, 0, img.width, img.height).data, img.width, img.height, hex);
+      p = { data: out.data, width: out.width, height: out.height, frameSize: out.frameSize, frames: out.frames };
+      this.processed.set(key, p);
     }
-    if (img === "pending") return "pending";
-    if (img === null) return null;
-    const src = document.createElement("canvas");
-    src.width = img.width;
-    src.height = img.height;
-    const sctx = src.getContext("2d", { willReadFrequently: true })!;
-    sctx.drawImage(img, 0, 0);
-    const p = processStrip(sctx.getImageData(0, 0, img.width, img.height).data, img.width, img.height, hex);
     const c = document.createElement("canvas");
     c.width = p.width;
     c.height = p.height;

@@ -26,7 +26,8 @@ desktop/    Tauri v2 app; frontend is Vite + TypeScript, no framework
   src/petwin.ts           pet-window helpers: labels, event de-dup, main window visibility, frame schedule (pure, tested)
   src/layout.ts           pure pet/toast layout and the pet window size (unit-tested in test/)
   src/avatar.ts           avatar logic: strip tinting, face cadence, state cues, geometry (pure, tested)
-  src/avatar-bank.ts      loads public/grokbot-art/ (gitignored, imported) and draws avatars
+  src/avatar-bank.ts      loads the avatar art (IPC in the app, public/grokbot-art/ in the preview),
+                          keeps tinted pixels for self-healing canvases, draws avatars
   src/presence.ts         what the pet bubble shows (toast, working label, setup notes), needs_you tracking (pure, tested)
   src/connections.ts      status line, boot view, paste line, old-settings clean-up (pure, tested)
   src-tauri/src/v2.rs     v2 pairing string, XChaCha20-Poly1305 envelope, validation, replay guard
@@ -38,12 +39,13 @@ desktop/    Tauri v2 app; frontend is Vite + TypeScript, no framework
   src-tauri/src/pet_windows.rs  pet windows: open/route/move/close, menu bar icon + count, right-click menu,
                           needs_you notifications
   src-tauri/src/lock.rs   Mutex locking that survives a poisoned lock
+  src-tauri/src/grokbot_art.rs  copies Grok Bot's avatar art from the user's own install at runtime
 skill/SKILL.md            Grok Bot skill: pairing, init, when/how to post status
 skill/deskpet-publish     bot-side publisher (Node stdlib; tests in skill/test/, compat.cjs for Node 12)
 protocol/v2.json          shared protocol constants + test cases (publisher, Rust and frontend test against it)
 scripts/fake-ntfy.mjs     local stand-in for ntfy (tests, e2e)
 scripts/e2e-v2.sh         publisher → mailbox → Rust pet client, local fake or --real ntfy.sh
-scripts/import-grokbot-art.mjs  copies Grok Bot avatar art + palette from the installed app
+scripts/import-grokbot-art.mjs  copies Grok Bot avatar art into public/ for the browser preview only
 scripts/demo.sh           fake bots (Jarvis, Claude, Scout) cycling through states
 scripts/dev.sh            tauri dev / web prototype / every test suite
 .github/workflows/        CI (tests, clippy, Node 12 publisher check) and the release build
@@ -103,8 +105,8 @@ sample bubbles) or `preview.html?controls` (the control window's views, with a f
    `publisher_version` in `protocol/v2.json` together (tests fail otherwise); pets then ask
    bots on the older publisher to update.
 2. Push a tag `v<version>`. `.github/workflows/release.yml` checks the tag matches, builds a
-   universal (Apple silicon + Intel) `.app` and `.dmg` with no Grok Bot art (and fails if any
-   reaches the bundle), and attaches the `.dmg` to a **draft** GitHub release. Publish the
+   universal (Apple silicon + Intel) `.app` and `.dmg` with no Grok Bot art (the app copies it
+   from the user's Grok Bot at runtime; the workflow fails if any reaches the bundle), and attaches the `.dmg` to a **draft** GitHub release. Publish the
    draft by hand. A manual run (`workflow_dispatch`) keeps the `.dmg` as a workflow artifact.
 
 **Unsigned (today).** Without signing secrets the app is ad-hoc signed. The first time,
@@ -134,8 +136,6 @@ generated `latest.json` with each release. Updating works best on signed builds.
 
 - macOS only so far (keyring is built with `apple-native`). Windows/Linux untested. No
   autostart.
-- Release builds have no Grok Bot avatar art (see [DESIGN.md](DESIGN.md#grok-bot-avatar-art-import-not-committed));
-  only local builds made on a Mac with Grok Bot installed draw bots as their profile pictures.
 - A pet window's transparent area (above and beside the pet) still takes clicks; the windows
   are kept small for that reason.
 - Debug builds have a self-test: `open --env DESKPET_SELFTEST_AGENTS=a,b "<the .app>"` opens a

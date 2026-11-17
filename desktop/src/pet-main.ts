@@ -71,9 +71,11 @@ function apply(e: StateEvent): void {
 }
 
 function setOffline(status: unknown): void {
+  const was = offline;
   offline = (status as { status?: string } | null)?.status === "offline";
   app.classList.toggle("offline", offline);
-  kick();
+  if (was && !offline) refresh(); // back from sleep or a network drop
+  else kick();
 }
 
 /**
@@ -148,6 +150,21 @@ function tick(): void {
   timer = setTimeout(tick, frameDelay(pet ? pet.nextFrameAt(now) : now, now));
 }
 
+/**
+ * Rebuild every cached canvas and repaint. WebKit may silently drop canvas pixels while a
+ * window is hidden or the Mac sleeps; this brings a vanished avatar back. Runs when the window
+ * shows again, after the connection comes back, and every 30 s as a safety net.
+ */
+function refresh(): void {
+  // No art yet (Rust may still be copying it, or Grok Bot isn't installed): look again.
+  if (!art.manifest) void art.load().then(kick);
+  bank.invalidate();
+  art.invalidate();
+  pet?.invalidate();
+  kick();
+}
+const REFRESH_MS = 30_000;
+
 /** Draw now (an event arrived, the window resized, settings changed). */
 function kick(): void {
   if (timer === null) return; // not started yet
@@ -176,6 +193,11 @@ async function boot(): Promise<void> {
     label, // only this bot's events (Rust sends each bot's to its own window)
   );
   await onEvent<unknown>("mailbox:status", setOffline);
+  // The app copied (or re-copied) Grok Bot's avatar art: load it and redraw.
+  await onEvent<unknown>("art:ready", async () => {
+    await art.load();
+    refresh();
+  });
   await onEvent<unknown>("deskpet:config", async () => {
     cfg = await loadConfig();
     relayout();
@@ -189,6 +211,9 @@ async function boot(): Promise<void> {
   ready = true;
   for (const e of early.splice(0)) apply(e);
   tick();
+  setInterval(refresh, REFRESH_MS);
+  document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && refresh());
+  window.addEventListener("pageshow", refresh);
 }
 
 window.addEventListener("error", (e) => console.warn("deskpet pet error", e.message));

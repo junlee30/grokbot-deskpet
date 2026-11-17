@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Copies the Grok Bot avatar art (the 26 tray face strips, @2x and @1x) and the avatar colour palette out of the
-// locally installed Grok Bot app into desktop/public/grokbot-art/ so the desk pet can draw each
-// bot as its own profile picture.
+// locally installed Grok Bot app into desktop/public/grokbot-art/ for the BROWSER PREVIEW
+// (`npm run dev`, preview.html). The app itself copies the art at runtime from the user's own
+// Grok Bot (desktop/src-tauri/src/grokbot_art.rs, same logic); builds never contain it.
 //
 // The copied art and palette are Grok Bot's, not ours: the output directory is gitignored and
 // must never be committed or redistributed. The desk pet works without it (bots fall back to the

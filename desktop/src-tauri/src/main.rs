@@ -8,6 +8,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod grokbot;
+mod grokbot_art;
 mod lock;
 mod mailbox;
 mod pet_windows;
@@ -169,6 +170,7 @@ fn main() {
         .manage(Http(stream::http_client()))
         .manage(MailboxState::default())
         .manage(pet_windows::PetWindows::default())
+        .manage(grokbot_art::ArtState::default())
         .on_menu_event(|app, ev| pet_windows::on_menu(app, ev.id().as_ref()))
         .invoke_handler(tauri::generate_handler![
             v2_normalize_url,
@@ -188,11 +190,14 @@ fn main() {
             pet_windows::pet_attention,
             pet_windows::app_quit,
             grokbot::grokbot_installed,
+            grokbot_art::grokbot_art_manifest,
+            grokbot_art::grokbot_art_file,
         ])
         .setup(|app| {
             // A desk pet should not take a Dock slot or the app switcher on macOS.
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            grokbot_art::init(app.handle());
             pet_windows::init(app.handle());
             if let Err(e) = pet_windows::tray(app.handle()) {
                 log_line(app.handle(), &format!("menu bar icon unavailable: {e}"));

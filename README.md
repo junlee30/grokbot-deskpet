@@ -24,9 +24,9 @@ macOS only for now. Apache-2.0 (see [LICENSE](LICENSE)).
   open "src-tauri/target/release/bundle/macos/Desk Pet.app"
   ```
 
-  A build made on a Mac with Grok Bot installed draws each bot as its own profile picture
-  (the art is copied from your Grok Bot app at build time and must stay on your computer).
-  Release builds use an original pixel-art robot in each bot's colour instead.
+With Grok Bot installed on the same Mac, each pet is drawn as its bot's own profile picture:
+Desk Pet copies that art from your Grok Bot when it starts (it's Grok Bot's art, so Desk Pet
+never ships it). Without Grok Bot, pets are an original pixel-art robot in each bot's colour.
 
 ## Quick start
 

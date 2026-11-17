@@ -8,7 +8,6 @@
   "scripts": {
     "dev": "vite",
     "art": "node ../scripts/import-grokbot-art.mjs",
-    "prebuild": "node ../scripts/import-grokbot-art.mjs --quiet",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "sprites": "node art/build-sprites.mjs",

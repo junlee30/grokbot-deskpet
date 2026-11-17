@@ -137,26 +137,34 @@ The UI follows Apple's HIG for menu bar extras, app icons, Dark Mode, typography
   - Before opening, the app asks macOS whether any app handles `grokbot:` links. If Grok Bot
     isn't installed, a click does nothing, and the log gets one line saying so.
 
-## Grok Bot avatar art (import, not committed)
+## Grok Bot avatar art (copied at runtime, never shipped)
 
-```bash
-node scripts/import-grokbot-art.mjs          # or: cd desktop && npm run art
-#   --app "/Applications/Grok Bot.app"  (or env GROKBOT_APP)  --from-dir <extracted asar>
-#   --out <dir>  --strict (exit 1 if nothing imported)  --quiet
-```
+The face strips and colours that make a pet look like its bot's profile picture are Grok
+Bot's, not Desk Pet's. No build contains them. The app copies them from **your own** Grok
+Bot install when it starts (`src-tauri/src/grokbot_art.rs`):
 
-- Runs automatically as `prebuild` of `desktop` (`npm run build`, so also `cargo tauri build`).
-  Without the Grok Bot app it prints a warning and the build continues with robot art only.
-- Reads `Contents/Resources/app.asar` read-only (no extraction, no dependencies) and checks
-  each file's SHA-256 against the asar's integrity record.
-- Copies `bot-<shape>-face@2x.png` and `bot-<shape>-face.png` (26 shapes, 29 frames each:
-  rest, blink close ×4, blink open ×3, glance left/right/up ×7) and writes `manifest.json`
-  with the frame sizes, the app version and the **palette**: the app's avatar colour list
-  (`{id, label, value}` entries, found in the renderer bundle, the same list its tray uses to
-  tint these strips). Only if that list is missing does it fall back to `--x-<color>-500` CSS
-  variables, and the manifest records which source was used.
-- `desktop/public/grokbot-art/` is gitignored: Grok Bot's art and palette are not ours and
-  must not be committed or redistributed. A local build contains them, so keep local builds
-  to yourself. Release builds are made on CI, where Grok Bot isn't installed; the release
-  workflow also fails if any of the art reaches the bundle. Released apps therefore draw
-  every bot as the robot (in its avatar colour).
+- It finds Grok Bot through macOS (whichever app opens `grokbot:` links), falling back to
+  `/Applications/Grok Bot.app`; `GROKBOT_APP` overrides it.
+- It reads `Contents/Resources/app.asar` read-only (no extraction) and checks each file's
+  SHA-256 against the archive's integrity record.
+- It copies `bot-<shape>-face@2x.png` and `bot-<shape>-face.png` (26 shapes, 29 frames each:
+  rest, blink close ×4, blink open ×3, glance left/right/up ×7) and the **palette**: the app's
+  avatar colour list (`{id, label, value}` entries in the renderer bundle, the same list its
+  tray tints these strips with), or `--x-<color>-500` CSS variables if that list is missing.
+- The copy lives in `~/Library/Application Support/dev.deskpet.grokbot/grokbot-art/` with a
+  `manifest.json` (shapes, frame sizes, palette, and the size/mtime/version of the archive it
+  came from). It is redone when Grok Bot changes. If Grok Bot is uninstalled, the last copy
+  stays in use. Without either, bots are drawn as the robot in their avatar colour.
+- Pet windows fetch the manifest and strips over IPC (`grokbot_art_manifest`,
+  `grokbot_art_file`, which serves only `bot-<known shape>-face[@2x].png`), as `blob:` URLs,
+  and reload when the app emits `art:ready`.
+- **Self-healing canvases.** WebKit can silently discard a canvas's pixels while a window is
+  hidden, under memory pressure or after sleep. A pet drawn from such a cached canvas would
+  vanish, leaving only its name tag. So the tinted strips' pixels are also kept in JS memory,
+  and every cached canvas is rebuilt and the pet repainted when its window shows again, when
+  the connection comes back, and every 30 s.
+
+For the **browser preview** (`npm run dev` → `preview.html`, no Rust), run
+`node scripts/import-grokbot-art.mjs` (or `npm run art`) once: it does the same copy into
+`desktop/public/grokbot-art/` (gitignored). Vite serves it in dev; production builds delete it
+from `dist/`, and the release workflow fails if any of it reaches the bundle.

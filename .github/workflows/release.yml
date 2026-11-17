@@ -21,7 +21,8 @@ jobs:
     env:
       HAS_SIGNING: ${{ secrets.APPLE_CERTIFICATE != '' }}
       # Never pick up Grok Bot's art on CI, even if a runner image ever ships the app: it is
-      # not ours to redistribute (see README, "Grok Bot avatar art").
+      # not ours to redistribute. The app copies it from the user's own Grok Bot at runtime
+      # (docs/DESIGN.md, "Grok Bot avatar art").
       GROKBOT_APP: /nonexistent
     steps:
       - uses: actions/checkout@v4

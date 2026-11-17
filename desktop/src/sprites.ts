@@ -65,6 +65,11 @@ export class SpriteBank {
   }
 
   /** Base + tinted accent, composited once per (state, colour). */
+  /** Drop the tinted canvases (rebuilt from the images on next use); see AvatarBank.invalidate. */
+  invalidate(): void {
+    this.tinted.clear();
+  }
+
   sheet(state: AnimState, colour: string): HTMLCanvasElement | null {
     const key = `${state}|${colour}`;
     const hit = this.tinted.get(key);
