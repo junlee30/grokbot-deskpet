@@ -2,6 +2,7 @@
 import type { DeskPetConfig } from "./config.ts";
 import { LABEL_OVERLAP_PX, layoutToast, tailX, toastMaxWidth, type Slot } from "./layout.ts";
 import { Attention, bubbleView, carryMessage, petNotice, receivedAt, sameView, stickyLabel, type BubbleView } from "./presence.ts";
+import { petLocale, strings, type Locale } from "./i18n.ts";
 import type { PetState, StateEvent } from "./events.ts";
 import { displayFor, eventOrder, type Session } from "./sessions.ts";
 import { accentFor, type AnimState, type SpriteBank } from "./sprites.ts";
@@ -14,6 +15,10 @@ const MAX_SESSIONS = 16;
 export class Pet {
   /** prefers-reduced-motion: avatars hold their body still (calmCue). Set by the window. */
   static reducedMotion = false;
+  /** The app's UI language (set by the window); a pet starts in it until its bot says otherwise. */
+  static uiLocale: Locale = "en";
+  /** The language this bot is using with the user: its tooltip, notes and notifications follow. */
+  locale: Locale = Pet.uiLocale;
   readonly id: string;
   name: string;
   accent: string;
@@ -192,6 +197,8 @@ export class Pet {
       this.snapTag();
     }
     if (typeof e.pv_outdated === "boolean") this.outdated = e.pv_outdated;
+    this.locale = petLocale(e, this.locale, Pet.uiLocale);
+    if (this.bubble.lang !== this.locale) this.bubble.lang = this.locale; // wrapping rules (style.css)
     const title = this.titleText();
     if (this.el.title !== title) this.el.title = title;
     const { at, fresh } = receivedAt(e, now);
@@ -207,7 +214,7 @@ export class Pet {
     if (e.message && fresh) this.toast(e.message, toastMs, now);
     if (e.state === "needs_you" && fresh) this.attention.arm(e.message);
     // Notes about the bot's setup wait for an event without a message of its own.
-    const note = fresh && !e.message ? petNotice(e, this.nagged) : null;
+    const note = fresh && !e.message ? petNotice(e, this.nagged, strings(this.locale)) : null;
     if (note) {
       this.toast(note.text, toastMs * 2, now);
       if (note.kind === "outdated") this.nagged = true;
@@ -215,7 +222,8 @@ export class Pet {
   }
 
   private titleText(): string {
-    return `Open ${this.name} in Grok Bot${this.outdated ? " · its Desk Pet skill is out of date" : ""}`;
+    const t = strings(this.locale);
+    return t.openInGrokBot(this.name) + (this.outdated ? t.skillOutdatedSuffix : "");
   }
 
   /** Forget what was painted, so the next frame repaints and re-shows everything. */

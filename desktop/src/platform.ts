@@ -2,6 +2,16 @@
 
 export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
+/**
+ * The Mac's preferred languages, as the webview reports them (first = the system language).
+ * Dev builds take `?lang=ko` to preview another language.
+ */
+export function preferredLanguages(): readonly string[] {
+  const forced = import.meta.env.DEV ? new URLSearchParams(location.search).get("lang") : null;
+  if (forced) return [forced];
+  return navigator.languages?.length ? navigator.languages : [navigator.language];
+}
+
 export async function openExternal(url: string): Promise<void> {
   if (inTauri) {
     const { openUrl } = await import("@tauri-apps/plugin-opener");

@@ -6,7 +6,8 @@ import { isStateEvent, type StateEvent } from "./events.ts";
 import { layoutPets } from "./layout.ts";
 import { Pet } from "./pets.ts";
 import { agentOfLabel, EventFeed, frameDelay, grokbotId, grokbotUrl } from "./petwin.ts";
-import { invokeCmd, onEvent, openExternal, startWindowDrag, windowLabel } from "./platform.ts";
+import { strings, uiLocale } from "./i18n.ts";
+import { invokeCmd, onEvent, openExternal, preferredLanguages, startWindowDrag, windowLabel } from "./platform.ts";
 import { SpriteBank } from "./sprites.ts";
 import { AvatarBank } from "./avatar-bank.ts";
 import { GEAR_SVG } from "./icons.ts";
@@ -27,8 +28,12 @@ const stage = document.getElementById("stage") as HTMLDivElement;
  */
 const gear = document.createElement("button");
 gear.className = "gear";
-gear.title = "Settings (or right-click the pet)";
-gear.setAttribute("aria-label", "Settings");
+// Menus and the gear speak the app's UI language; what's about this bot speaks the bot's (pets.ts).
+const ui = uiLocale(preferredLanguages());
+Pet.uiLocale = ui;
+document.documentElement.lang = ui;
+gear.title = strings(ui).gearTitle;
+gear.setAttribute("aria-label", strings(ui).settings);
 gear.innerHTML = GEAR_SVG;
 gear.addEventListener("click", () => void invokeCmd("open_settings_window"));
 const GEAR_RESERVE = 24;
@@ -122,7 +127,7 @@ app.addEventListener("mousedown", (ev) => {
 // Show Hidden Pets, Quit).
 app.addEventListener("contextmenu", (ev) => {
   ev.preventDefault();
-  void invokeCmd("pet_menu", { name: pet?.name ?? null });
+  void invokeCmd("pet_menu", { name: pet?.name ?? null, hideLabel: pet ? strings(ui).hide(pet.name) : null });
 });
 
 // ---------- render loop ----------
@@ -135,11 +140,12 @@ function frame(): void {
   pet.draw(bank, Date.now(), cfg, offline);
   const call = pet.attention.step(pet.el.dataset.state ?? "");
   if (call) {
+    const t = strings(pet.locale); // the notification speaks this bot's language
     void invokeCmd("pet_attention", {
       needs: call.needs,
       notify: call.notify && cfg.notifyNeedsYou,
-      name: pet.name,
-      message: call.message ?? null,
+      title: t.needsYouTitle(pet.name),
+      body: call.message?.trim() ? call.message : t.needsYouBody,
     }).catch(() => {});
   }
 }

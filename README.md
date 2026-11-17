@@ -58,6 +58,10 @@ The same code works for any number of bots and bot computers (menu bar icon → 
   the menu bar icon shows how many bots are waiting. Turn it off in Settings.
 - **Click a pet** to open that bot's chat in Grok Bot. **Right-click** it to hide just that
   pet until its bot does something new (or bring it back with **Show Hidden Pets**).
+- **Speaks your language.** Bots write their status in the language you're talking to them
+  in, and each pet's own text (tooltip, notes, its "needs you" notification) follows its
+  bot: Korean with a bot you talk to in Korean, English with another. Desk Pet's windows and
+  menus follow your Mac's language, like Grok Bot. English and Korean so far.
 - **Light and dark mode, Reduced Motion, Increase Contrast**, and a menu bar icon instead of a
   Dock icon.
 

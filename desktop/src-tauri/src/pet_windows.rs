@@ -49,6 +49,58 @@ pub struct Inner {
     /// Pets the user hid (right-click → Hide), with their recent events, until the bot does
     /// something new or the user picks Show Hidden Pets.
     hidden: HashMap<String, VecDeque<Value>>,
+    /// The menu and menu bar labels in the app's UI language (set by the main window).
+    ui: UiStrings,
+}
+
+/// Menu and menu bar labels in the app's UI language. The main window sends them
+/// (src/i18n.ts) at start-up; until then, and for anything it leaves out, English.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+#[serde(default)]
+pub struct UiStrings {
+    pub settings: String,
+    pub reset_positions: String,
+    pub show_hidden: String,
+    pub quit: String,
+    /// Menu bar tooltip with one bot waiting, and with several (`{n}` = how many).
+    pub tray_needs_one: String,
+    pub tray_needs_many: String,
+}
+
+impl Default for UiStrings {
+    fn default() -> Self {
+        Self {
+            settings: MENU_ITEMS[0].1.into(),
+            reset_positions: MENU_ITEMS[1].1.into(),
+            show_hidden: MENU_ITEMS[2].1.into(),
+            quit: MENU_ITEMS[3].1.into(),
+            tray_needs_one: "Desk Pet · 1 bot needs you".into(),
+            tray_needs_many: "Desk Pet · {n} bots need you".into(),
+        }
+    }
+}
+
+impl UiStrings {
+    /// Labels from a webview: one line each, capped; an empty one keeps the English default.
+    fn sanitized(self) -> Self {
+        let d = Self::default();
+        let fix = |v: String, def: String| {
+            let v = one_line(&v, 64);
+            if v.is_empty() {
+                def
+            } else {
+                v
+            }
+        };
+        Self {
+            settings: fix(self.settings, d.settings),
+            reset_positions: fix(self.reset_positions, d.reset_positions),
+            show_hidden: fix(self.show_hidden, d.show_hidden),
+            quit: fix(self.quit, d.quit),
+            tray_needs_one: fix(self.tray_needs_one, d.tray_needs_one),
+            tray_needs_many: fix(self.tray_needs_many, d.tray_needs_many),
+        }
+    }
 }
 
 pub struct PetWindows(Mutex<Inner>);
@@ -66,6 +118,7 @@ impl Default for PetWindows {
             dropped: HashSet::new(),
             needing: HashSet::new(),
             hidden: HashMap::new(),
+            ui: UiStrings::default(),
         }))
     }
 }
@@ -354,13 +407,17 @@ pub const MENU_ITEMS: [(&str, &str); 4] =
 
 /// The menu. On a pet (right-click) it starts with "Hide <name>" for that pet. Show Hidden
 /// Pets is enabled only while some pet is hidden.
-fn menu(app: &AppHandle, pet: Option<(&str, &str)>) -> tauri::Result<Menu<Wry>> {
-    let any_hidden = !state(app).0.locked().hidden.is_empty();
-    let item = |i: usize, enabled: bool| MenuItem::with_id(app, MENU_ITEMS[i].0, MENU_ITEMS[i].1, enabled, None::<&str>);
+fn menu(app: &AppHandle, pet: Option<(&str, String)>) -> tauri::Result<Menu<Wry>> {
+    let (any_hidden, ui) = {
+        let g = state(app).0.locked();
+        (!g.hidden.is_empty(), g.ui.clone())
+    };
+    let labels = [ui.settings, ui.reset_positions, ui.show_hidden, ui.quit];
+    let item = |i: usize, enabled: bool| MenuItem::with_id(app, MENU_ITEMS[i].0, &labels[i], enabled, None::<&str>);
     let m = Menu::new(app)?;
-    if let Some((agent, name)) = pet {
+    if let Some((agent, hide_label)) = pet {
         if let Some(id) = pets::hide_menu_id(agent) {
-            m.append(&MenuItem::with_id(app, id, pets::hide_label(name), true, None::<&str>)?)?;
+            m.append(&MenuItem::with_id(app, id, hide_label, true, None::<&str>)?)?;
             m.append(&PredefinedMenuItem::separator(app)?)?;
         }
     }
@@ -458,18 +515,21 @@ pub fn tray(app: &AppHandle) -> tauri::Result<()> {
 }
 
 /// The menu bar icon's title and tooltip: how many bots need you (nothing when none do).
-pub fn tray_count_text(n: usize) -> (Option<String>, String) {
+pub fn tray_count_text(n: usize, ui: &UiStrings) -> (Option<String>, String) {
     match n {
         0 => (None, "Desk Pet".into()),
-        1 => (Some("1".into()), "Desk Pet · 1 bot needs you".into()),
-        n => (Some(n.to_string()), format!("Desk Pet · {n} bots need you")),
+        1 => (Some("1".into()), ui.tray_needs_one.clone()),
+        n => (Some(n.to_string()), ui.tray_needs_many.replace("{n}", &n.to_string())),
     }
 }
 
 fn sync_tray_count(app: &AppHandle) {
-    let n = state(app).0.locked().needing.len();
+    let (n, ui) = {
+        let g = state(app).0.locked();
+        (g.needing.len(), g.ui.clone())
+    };
     if let Some(tray) = app.tray_by_id("deskpet") {
-        let (title, tip) = tray_count_text(n);
+        let (title, tip) = tray_count_text(n, &ui);
         let _ = tray.set_title(title);
         let _ = tray.set_tooltip(Some(tip));
     }
@@ -486,11 +546,13 @@ fn one_line(s: &str, max: usize) -> String {
     }
 }
 
-fn notify_needs_you(app: &AppHandle, name: &str, message: Option<&str>) {
+/// The pet window writes the notification in its bot's language (src/i18n.ts); here it's
+/// only made one line and capped.
+fn notify_needs_you(app: &AppHandle, title: &str, body: &str) {
     use tauri_plugin_notification::NotificationExt;
-    let name = one_line(name, 64);
-    let body = message.map(|m| one_line(m, 160)).filter(|m| !m.is_empty()).unwrap_or_else(|| "Waiting for you in Grok Bot".into());
-    if let Err(e) = app.notification().builder().title(format!("{name} needs you")).body(body).show() {
+    let title = Some(one_line(title, 80)).filter(|t| !t.is_empty()).unwrap_or_else(|| "Desk Pet".into());
+    let body = one_line(body, 160);
+    if let Err(e) = app.notification().builder().title(title).body(body).show() {
         log_line(app, &format!("notification failed: {e}"));
     }
 }
@@ -500,7 +562,7 @@ fn notify_needs_you(app: &AppHandle, name: &str, message: Option<&str>) {
 /// A pet started or stopped showing needs_you. `notify`: the pet window decided this one is
 /// fresh and the user wants notifications (Settings). Counts feed the menu bar icon.
 #[tauri::command]
-pub fn pet_attention(app: AppHandle, window: WebviewWindow, needs: bool, notify: bool, name: String, message: Option<String>) -> Result<(), String> {
+pub fn pet_attention(app: AppHandle, window: WebviewWindow, needs: bool, notify: bool, title: String, body: String) -> Result<(), String> {
     let agent = agent_of(window.label()).ok_or("not a pet window")?.to_string();
     let changed = {
         let mut g = state(&app).0.locked();
@@ -514,7 +576,7 @@ pub fn pet_attention(app: AppHandle, window: WebviewWindow, needs: bool, notify:
         sync_tray_count(&app);
     }
     if needs && notify {
-        notify_needs_you(&app, &name, message.as_deref());
+        notify_needs_you(&app, &title, &body);
     }
     Ok(())
 }
@@ -580,11 +642,25 @@ pub fn open_settings_window(app: AppHandle) {
 
 /// Right-click on a pet: the same menu as the tray icon, at the pointer.
 #[tauri::command]
-pub fn pet_menu(app: AppHandle, window: WebviewWindow, name: Option<String>) -> Result<(), String> {
+pub fn pet_menu(app: AppHandle, window: WebviewWindow, name: Option<String>, hide_label: Option<String>) -> Result<(), String> {
     let agent = agent_of(window.label()).map(str::to_owned);
-    let pet = agent.as_deref().map(|a| (a, name.as_deref().unwrap_or(a)));
+    let pet = agent.as_deref().map(|a| {
+        // "Hide <name>" in the UI language, from the pet window; English if it didn't say.
+        let label = hide_label.map(|l| one_line(&l, 48)).filter(|l| !l.is_empty());
+        (a, label.unwrap_or_else(|| pets::hide_label(name.as_deref().unwrap_or(a))))
+    });
     let m = menu(&app, pet).map_err(|e| e.to_string())?;
     window.popup_menu(&m).map_err(|e| e.to_string())
+}
+
+/// The main window's labels for the menus and the menu bar tooltip (its UI language).
+#[tauri::command]
+pub fn set_ui_strings(app: AppHandle, window: WebviewWindow, strings: UiStrings) -> Result<(), String> {
+    require_main(&window)?;
+    state(&app).0.locked().ui = strings.sanitized();
+    sync_tray_menu(&app);
+    sync_tray_count(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -695,9 +771,18 @@ mod tests {
 
     #[test]
     fn tray_count_and_notification_text() {
-        assert_eq!(tray_count_text(0), (None, "Desk Pet".to_string()));
-        assert_eq!(tray_count_text(1).0.as_deref(), Some("1"));
-        assert!(tray_count_text(3).1.ends_with("3 bots need you"));
+        let en = UiStrings::default();
+        assert_eq!(tray_count_text(0, &en), (None, "Desk Pet".to_string()));
+        assert_eq!(tray_count_text(1, &en), (Some("1".into()), "Desk Pet · 1 bot needs you".into()));
+        assert!(tray_count_text(3, &en).1.ends_with("3 bots need you"));
+        let ko: UiStrings = serde_json::from_value(json!({"tray_needs_one": "Desk Pet · 봇 1개가 기다리는 중", "tray_needs_many": "Desk Pet · 봇 {n}개가 기다리는 중", "quit": "Desk Pet 종료"})).unwrap();
+        let ko = ko.sanitized();
+        assert_eq!(tray_count_text(2, &ko).1, "Desk Pet · 봇 2개가 기다리는 중");
+        assert_eq!(ko.quit, "Desk Pet 종료");
+        assert_eq!(ko.settings, "Settings…", "a label left out stays English");
+        let messy: UiStrings = serde_json::from_value(json!({"settings": "  Set\ntings  ", "quit": ""})).unwrap();
+        let messy = messy.sanitized();
+        assert_eq!((messy.settings.as_str(), messy.quit.as_str()), ("Set tings", "Quit Desk Pet"));
         assert_eq!(one_line("  a\n\tb  ", 10), "a b");
         assert_eq!(one_line(&"é".repeat(200), 160).chars().count(), 160);
     }

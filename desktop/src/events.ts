@@ -24,6 +24,8 @@ export interface StateEvent {
   pv_outdated?: boolean;
   /** Posts the bot's computer couldn't deliver because the mailbox rate-limited it. */
   dropped?: number;
+  /** The language the bot is using with the user (BCP 47, e.g. "ko"); the pet follows it. */
+  lang?: string;
 }
 
 export type ConnStatus = "connecting" | "online" | "offline";

@@ -142,6 +142,26 @@ The UI follows Apple's HIG for menu bar extras, app icons, Dark Mode, typography
   - Before opening, the app asks macOS whether any app handles `grokbot:` links. If Grok Bot
     isn't installed, a click does nothing, and the log gets one line saying so.
 
+## Languages
+
+Two kinds of text, two rules (`src/i18n.ts`, unit-tested):
+
+- **Desk Pet's own UI** (the main window, Settings, the right-click and menu bar menus, the
+  menu bar tooltip) follows the Mac's **first** preferred language if Desk Pet has it, else
+  English. That is how Grok Bot picks its UI language too (Electron's `app.getLocale`), so
+  the two apps match. The main window gives Rust the menu labels (`set_ui_strings`).
+- **Text about one bot** (its tooltip, "Missed N updates", "out of date", its "needs you"
+  notification) follows the language that bot is using with you: the `lang` its posts carry
+  (a language without a table falls back to the UI's), or, for older bots that don't send
+  one, Hangul in its message means Korean. Two bots can speak two languages side by side.
+- **The bots' own words** (bubbles, working label) are shown as written. The skill tells bots
+  to write them in the conversation's language and tag posts with `lang`.
+
+Korean text wraps between words (`word-break: keep-all` under `:lang(ko)`); each bubble
+carries its bot's `lang`. Tables: English and Korean. To add a language, add it to `LOCALES`
+and give it a complete `Strings` table (the type checker and `test/i18n.test.ts` list what's
+missing). In dev, `?lang=ko` on any page (or `preview.html?controls&lang=ko`) previews one.
+
 ## Grok Bot avatar art (copied at runtime, never shipped)
 
 The face strips and colours that make a pet look like its bot's profile picture are Grok

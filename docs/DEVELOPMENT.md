@@ -29,7 +29,8 @@ desktop/    Tauri v2 app; frontend is Vite + TypeScript, no framework
   src/avatar-bank.ts      loads the avatar art (IPC in the app, public/grokbot-art/ in the preview),
                           keeps tinted pixels for self-healing canvases, draws avatars
   src/presence.ts         what the pet bubble shows (toast, working label, setup notes), needs_you tracking (pure, tested)
-  src/connections.ts      status line, boot view, paste line, old-settings clean-up (pure, tested)
+  src/connections.ts      status line, boot view, paste line, skill link (pure, tested)
+  src/i18n.ts             every string, per language; UI and per-bot language rules (pure, tested)
   src-tauri/src/v2.rs     v2 pairing string, XChaCha20-Poly1305 envelope, validation, replay guard
   src-tauri/src/mailbox.rs  v2 ntfy SSE client (since=, backoff, wake detection)
   src-tauri/src/secrets.rs  Keychain (keyring crate)

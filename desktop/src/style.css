@@ -875,3 +875,13 @@ button > svg {
 #app[data-kind="pet"]:hover .gear {
   opacity: 1;
 }
+
+/* Korean wraps between words (어절), not inside them. The UI sets <html lang>; each pet's
+   bubble carries its bot's language. The paste line still breaks anywhere (.paste). */
+:lang(ko) {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.paste:lang(ko) {
+  word-break: break-all;
+}

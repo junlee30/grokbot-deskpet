@@ -230,6 +230,23 @@ pub struct BotEvent {
     pub pv: Option<String>,
     /// Posts the bot's computer couldn't deliver because the mailbox rate-limited it.
     pub dropped: Option<u64>,
+    /// The language the bot is using with the user (BCP 47, primary subtag lowercased).
+    pub lang: Option<String>,
+}
+
+/// A BCP 47 language tag, kept simple: a 2-3 letter language, then up to three subtags of
+/// 1-8 letters or digits (`ko`, `en-US`, `zh-Hant-TW`, `pt-BR`). Lowercases the language.
+pub fn lang_tag(s: &str) -> Option<String> {
+    let mut parts = s.split('-');
+    let primary = parts.next()?;
+    if !(2..=3).contains(&primary.len()) || !primary.bytes().all(|b| b.is_ascii_alphabetic()) {
+        return None;
+    }
+    let rest: Vec<&str> = parts.collect();
+    if rest.len() > 3 || rest.iter().any(|p| !(1..=8).contains(&p.len()) || !p.bytes().all(|b| b.is_ascii_alphanumeric())) {
+        return None;
+    }
+    Some(std::iter::once(primary.to_ascii_lowercase()).chain(rest.iter().map(|p| p.to_string())).collect::<Vec<_>>().join("-"))
 }
 
 // ---------------------------------------------------------------- shared protocol file
@@ -349,6 +366,7 @@ pub fn parse_event(plaintext: &[u8]) -> Result<BotEvent, &'static str> {
         grokbot_id: o.get("grokbot_id").and_then(Value::as_str).filter(|s| grokbot_id_ok(s)).map(str::to_string),
         pv: o.get("pv").and_then(Value::as_str).filter(|s| version_parts(s).is_some()).map(str::to_string),
         dropped: o.get("dropped").and_then(Value::as_u64).filter(|&n| (1..=1_000_000).contains(&n)),
+        lang: o.get("lang").and_then(Value::as_str).and_then(lang_tag),
     })
 }
 
@@ -382,6 +400,9 @@ impl BotEvent {
         m["pv_outdated"] = json!(publisher_outdated(self.pv.as_deref(), latest_publisher()));
         if let Some(n) = self.dropped {
             m["dropped"] = json!(n);
+        }
+        if let Some(l) = &self.lang {
+            m["lang"] = json!(l);
         }
         m
     }
@@ -622,11 +643,21 @@ mod tests {
         }
         for v in p["accepted_with_fields_dropped"].as_array().unwrap() {
             let e = parse_event(v.to_string().as_bytes()).unwrap_or_else(|err| panic!("{err}: {v}"));
-            assert!(e.grokbot_id.is_none() && e.pv.is_none() && e.dropped.is_none(), "{v}");
+            assert!(e.grokbot_id.is_none() && e.pv.is_none() && e.dropped.is_none() && e.lang.is_none(), "{v}");
             assert!(e.to_ui_json(0)["pv_outdated"].as_bool().unwrap(), "no pv: outdated");
         }
         for c in p["invalid"].as_array().unwrap() {
             assert!(parse_event(c["event"].to_string().as_bytes()).is_err(), "{}", c["why"]);
+        }
+    }
+
+    #[test]
+    fn language_tags() {
+        for (input, want) in [("ko", "ko"), ("KO", "ko"), ("en-US", "en-US"), ("zh-Hant-TW", "zh-Hant-TW"), ("pt-BR", "pt-BR"), ("fil", "fil")] {
+            assert_eq!(lang_tag(input).as_deref(), Some(want), "{input}");
+        }
+        for bad in ["", "k", "kore", "ko_KR", "ko-", "ko-KR-x-y-z", "en-toolongsubtag", "<b>", "ko KR", "1a"] {
+            assert_eq!(lang_tag(bad), None, "{bad}");
         }
     }
 

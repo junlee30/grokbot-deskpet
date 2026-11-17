@@ -6,6 +6,7 @@
 //     sessions in that state stays up as a short label ("Reading the build log").
 // A toast wins while it lasts, unless it says the same as the label (then it is the label).
 import type { PetState } from "./events.ts";
+import { strings, type Strings } from "./i18n.ts";
 
 /** States whose message stays up as a persistent label. */
 export const STICKY_STATES: ReadonlySet<string> = new Set<PetState>(["working", "juggling"]);
@@ -94,10 +95,10 @@ export interface PetNotice {
  * posts lost to the mailbox's rate limit, or a publisher older than this app's. The outdated
  * note is shown once (`nagged`); the pet's tooltip keeps saying it.
  */
-export function petNotice(e: { pv_outdated?: boolean; dropped?: number }, nagged: boolean): PetNotice | null {
+export function petNotice(e: { pv_outdated?: boolean; dropped?: number }, nagged: boolean, t: Strings = strings("en")): PetNotice | null {
   const n = typeof e.dropped === "number" && Number.isInteger(e.dropped) && e.dropped > 0 ? e.dropped : 0;
-  if (n) return { kind: "dropped", text: `Missed ${n} update${n === 1 ? "" : "s"} (mailbox limit reached)` };
-  if (e.pv_outdated === true && !nagged) return { kind: "outdated", text: "My Desk Pet skill is out of date: ask me to update it" };
+  if (n) return { kind: "dropped", text: t.missedUpdates(n) };
+  if (e.pv_outdated === true && !nagged) return { kind: "outdated", text: t.outdatedNote };
   return null;
 }
 

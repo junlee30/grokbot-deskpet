@@ -3,14 +3,31 @@
 // placed by the Rust side; this window hides itself while only the pets are needed.
 import { loadConfig, saveSettings, v2State, type DeskPetConfig } from "./config.ts";
 import { bootView, headerStatus, pasteLineV2, SKILL_URL, type Conn } from "./connections.ts";
+import { strings, uiLocale } from "./i18n.ts";
 import type { ConnStatus, StateEvent } from "./events.ts";
 import { CHECK_SVG, GEAR_SVG, LOCK_SVG } from "./icons.ts";
 import { controlWindowSize, petWindowSize, type PetSize } from "./layout.ts";
 import { NoMailbox, TauriMailbox, type Mailbox, type MailboxHandlers } from "./mailbox.ts";
 import { DEFAULT_MAILBOX, validateMailboxUrl } from "./net.ts";
 import { mainWindowVisible } from "./petwin.ts";
-import { appVersion, broadcast, copyText, inTauri, invokeCmd, onEvent, quitApp, setWindowSize, setWindowVisible, startWindowDrag } from "./platform.ts";
+import { appVersion, broadcast, copyText, inTauri, invokeCmd, preferredLanguages, onEvent, quitApp, setWindowSize, setWindowVisible, startWindowDrag } from "./platform.ts";
 import appIcon from "../icons-src/icon.svg?url";
+
+// The UI language: the Mac's first preferred language if we have it (as Grok Bot decides).
+const ui = uiLocale(preferredLanguages());
+const t = strings(ui);
+document.documentElement.lang = ui;
+// Menus and the menu bar tooltip are built in Rust: give it this language's labels.
+void invokeCmd("set_ui_strings", {
+  strings: {
+    settings: t.menuSettings,
+    reset_positions: t.resetPositions,
+    show_hidden: t.showHidden,
+    quit: t.quit,
+    tray_needs_one: t.trayNeedsOne,
+    tray_needs_many: t.trayNeedsMany,
+  },
+}).catch(() => {});
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
@@ -21,58 +38,58 @@ app.innerHTML = `
         <h1>Desk Pet</h1>
         <div class="status"><span class="dot" id="status-dot"></span><span id="status"></span></div>
       </div>
-      <button class="icon-btn" id="gear" title="Settings" aria-label="Settings" aria-pressed="false">${GEAR_SVG}</button>
+      <button class="icon-btn" id="gear" title="${t.settings}" aria-label="${t.settings}" aria-pressed="false">${GEAR_SVG}</button>
     </header>
 
     <section class="view stack hello" id="pair-start" hidden>
       <div>
-        <h2>Your Grok Bots, on your desk</h2>
-        <p class="sub">Each bot gets a little pet that shows what it's up to. Click a pet to open its chat.</p>
+        <h2>${t.helloTitle}</h2>
+        <p class="sub">${t.helloSub}</p>
       </div>
-      <button class="primary big" id="connect">Connect your Grok Bot</button>
+      <button class="primary big" id="connect">${t.connect}</button>
       <p class="meta" id="pair-mode"></p>
       <p class="meta error" id="pair-error"></p>
     </section>
 
     <section class="view stack" id="pair-code" hidden>
       <div>
-        <h2>Paste this to your Grok Bot</h2>
+        <h2>${t.pasteTitle}</h2>
         <p class="sub" id="pair-note"></p>
       </div>
       <div class="code-card" id="code-card"><div class="paste" id="paste-line"></div></div>
       <div class="actions">
-        <button class="plain" id="cancel-pair">Cancel</button>
+        <button class="plain" id="cancel-pair">${t.cancel}</button>
         <span class="spacer"></span>
-        <button id="done-pair">Done</button>
-        <button class="primary" id="copy">Copy</button>
+        <button id="done-pair">${t.done}</button>
+        <button class="primary" id="copy">${t.copy}</button>
       </div>
     </section>
 
     <section class="view empty" id="waiting" hidden>
       <img class="pup" src="${appIcon}" alt="" />
-      <h2 id="w-title">Waiting for your first bot…</h2>
+      <h2 id="w-title">${t.waitingFirst}</h2>
       <p class="sub" id="w-sub"></p>
-      <button id="w-code" hidden>Show code</button>
+      <button id="w-code" hidden>${t.showCode}</button>
     </section>
 
     <section class="view" id="settings" hidden>
       <div class="group">
         <div class="row">
-          <span class="label">Pairing</span>
+          <span class="label">${t.pairing}</span>
           <div class="value">
             <span class="state-line" id="s-v2-state"></span>
-            <button type="button" class="small" id="s-v2-code">Show code</button>
-            <button type="button" class="small" id="s-v2-new">New code</button>
-            <button type="button" class="small danger" id="s-v2-unpair">Unpair</button>
+            <button type="button" class="small" id="s-v2-code">${t.showCode}</button>
+            <button type="button" class="small" id="s-v2-new">${t.newCode}</button>
+            <button type="button" class="small danger" id="s-v2-unpair">${t.unpair}</button>
           </div>
         </div>
         <div class="row">
-          <span class="label">Skill</span>
-          <div class="value"><button type="button" class="small" id="s-skill" title="${SKILL_URL}">Copy Skill Link</button></div>
+          <span class="label">${t.skill}</span>
+          <div class="value"><button type="button" class="small" id="s-skill" title="${SKILL_URL}">${t.copySkillLink}</button></div>
           <div class="note" id="s-skill-note"></div>
         </div>
         <div class="row">
-          <label class="label" for="s-mailbox">Mailbox</label>
+          <label class="label" for="s-mailbox">${t.mailbox}</label>
           <div class="value">
             <input id="s-mailbox" spellcheck="false" autocomplete="off" />
             <button type="button" class="small" id="s-ntfy" title="${DEFAULT_MAILBOX}">ntfy.sh</button>
@@ -80,30 +97,30 @@ app.innerHTML = `
           <div class="note" id="s-mailbox-note"></div>
         </div>
         <div class="row">
-          <span class="label">Pet size</span>
+          <span class="label">${t.petSize}</span>
           <div class="value">
-            <div class="seg" role="radiogroup" aria-label="Pet size">
-              <label><input type="radio" name="s-size" value="large" /><span>Large</span></label>
-              <label><input type="radio" name="s-size" value="small" /><span>Small</span></label>
+            <div class="seg" role="radiogroup" aria-label="${t.petSize}">
+              <label><input type="radio" name="s-size" value="large" /><span>${t.large}</span></label>
+              <label><input type="radio" name="s-size" value="small" /><span>${t.small}</span></label>
             </div>
           </div>
         </div>
         <div class="row">
-          <span class="label">Alerts</span>
-          <div class="value"><label class="check"><input type="checkbox" id="s-notify" /><span>Notify me when a bot needs me</span></label></div>
+          <span class="label">${t.alerts}</span>
+          <div class="value"><label class="check"><input type="checkbox" id="s-notify" /><span>${t.notifyMe}</span></label></div>
         </div>
         <div class="row">
-          <span class="label">Positions</span>
-          <div class="value"><button type="button" class="small" id="s-reset-pos">Reset Pet Positions</button></div>
+          <span class="label">${t.positions}</span>
+          <div class="value"><button type="button" class="small" id="s-reset-pos">${t.resetPositions}</button></div>
           <div class="note" id="s-reset-note"></div>
         </div>
       </div>
       <div class="foot">
-        <button class="plain" id="s-quit">Quit Desk Pet</button>
+        <button class="plain" id="s-quit">${t.quit}</button>
         <span class="version" id="s-version"></span>
         <span class="spacer"></span>
-        <button id="s-close">Cancel</button>
-        <button class="primary" id="s-save">Save</button>
+        <button id="s-close">${t.cancel}</button>
+        <button class="primary" id="s-save">${t.save}</button>
       </div>
     </section>
   </div>
@@ -146,12 +163,10 @@ function syncMain(): void {
   $("gear").setAttribute("aria-pressed", String(s));
   if (view === "pets" && agents.size === 0) {
     const first = !v2State.seen();
-    setText("w-title", first ? "Waiting for your first bot…" : "Waiting for your bots…");
+    setText("w-title", first ? t.waitingFirst : t.waitingBots);
     setText(
       "w-sub",
-      first
-        ? "Paste the pairing message to a Grok Bot. Its pet pops up on your desk the moment it posts."
-        : "Paired and listening. Each bot's pet pops up on your desk when it posts.",
+      first ? t.waitingFirstSub : t.waitingSub,
     );
     $("w-code").hidden = !v2Active;
   }
@@ -194,7 +209,7 @@ function applyVisible(v: boolean): void {
 }
 
 function renderStatus(): void {
-  const h = headerStatus({ paired: v2Active, conn: connV2, host: cfg ? hostOf(cfg.mailboxUrl) : "" });
+  const h = headerStatus({ paired: v2Active, conn: connV2, host: cfg ? hostOf(cfg.mailboxUrl) : "" }, t);
   app.classList.toggle("offline", h.tone === "offline");
   $("status-dot").dataset.s = h.tone;
   statusEl.textContent = h.text;
@@ -216,8 +231,8 @@ function hostOf(u: string): string {
 function showPairMode(): void {
   $("pair-mode").innerHTML = mailbox.supported ? `${LOCK_SVG}<span></span>` : "<span></span>";
   $("pair-mode").querySelector("span")!.textContent = mailbox.supported
-    ? `Private, end-to-end encrypted · via ${hostOf(cfg.mailboxUrl)}`
-    : "The private mailbox needs the desktop app";
+    ? t.pairMode(hostOf(cfg.mailboxUrl))
+    : t.needsDesktop;
 }
 
 // ---------- pairing ----------
@@ -236,7 +251,7 @@ async function beginV2(): Promise<void> {
     renderStatus();
     showCodeV2(code, true);
   } catch (e) {
-    err.textContent = `Couldn't create a code: ${e instanceof Error ? e.message : String(e)}`.slice(0, 120);
+    err.textContent = t.codeError(e instanceof Error ? e.message : String(e)).slice(0, 120);
     if (view !== "pair-start") show("pair-start");
   } finally {
     btn.disabled = false;
@@ -246,9 +261,9 @@ async function beginV2(): Promise<void> {
 function showCodeV2(code: string, isNew: boolean): void {
   shownV2Code = code;
   shownV2IsNew = isNew;
-  $("paste-line").textContent = pasteLineV2(code);
-  $("pair-note").textContent = "It works for any number of bots. The code is the key to your pets: share it only with your own bots.";
-  $("cancel-pair").textContent = isNew ? "Cancel" : "Close";
+  $("paste-line").textContent = pasteLineV2(code, t);
+  $("pair-note").textContent = t.pairNote;
+  $("cancel-pair").textContent = isNew ? t.cancel : t.close;
   show("pair-code");
 }
 
@@ -304,27 +319,27 @@ app.addEventListener("mousedown", (ev) => {
 async function refreshConnRows(): Promise<void> {
   const v2 = mailbox.supported ? await mailbox.status().catch(() => ({ paired: false, mailbox: null })) : null;
   $("s-v2-state").textContent = !v2
-    ? "Pairing needs the desktop app"
+    ? t.pairingNeedsDesktop
     : v2.paired
-      ? `Paired${v2.mailbox ? ` · ${v2.mailbox}` : ""}${v2State.seen() ? "" : " · no bot yet"}`
-      : "Not paired";
+      ? t.paired(v2.mailbox ?? null, !v2State.seen())
+      : t.notPaired;
   $<HTMLButtonElement>("s-v2-code").disabled = !v2?.paired;
   $<HTMLButtonElement>("s-v2-unpair").disabled = !v2?.paired;
   $<HTMLButtonElement>("s-v2-new").disabled = !v2;
-  $("s-v2-new").textContent = v2?.paired ? "New code" : "Pair";
+  $("s-v2-new").textContent = v2?.paired ? t.newCode : t.pair;
   $("s-v2-new").classList.toggle("primary", !v2?.paired);
 }
 
 async function openSettings(): Promise<void> {
   $<HTMLInputElement>("s-mailbox").value = cfg.mailboxUrl;
-  $("s-mailbox-note").textContent = "Used for the next new code.";
+  $("s-mailbox-note").textContent = t.mailboxNote;
   $("s-mailbox-note").classList.remove("error");
   for (const r of sizeRadios()) r.checked = r.value === cfg.petSize;
   $<HTMLInputElement>("s-notify").checked = cfg.notifyNeedsYou;
   $("s-reset-note").textContent = "";
   $("s-skill-note").textContent = "";
-  disarm($<HTMLButtonElement>("s-v2-new"), "New code");
-  disarm($<HTMLButtonElement>("s-v2-unpair"), "Unpair");
+  disarm($<HTMLButtonElement>("s-v2-new"), t.newCode);
+  disarm($<HTMLButtonElement>("s-v2-unpair"), t.unpair);
   await refreshConnRows();
   $("settings").hidden = false;
   syncMain();
@@ -345,7 +360,7 @@ function applyPetSize(): Promise<unknown> {
 
 async function saveSettingsFromForm(): Promise<void> {
   const mbNote = $("s-mailbox-note");
-  const mb = validateMailboxUrl($<HTMLInputElement>("s-mailbox").value);
+  const mb = validateMailboxUrl($<HTMLInputElement>("s-mailbox").value, t);
   if (!mb.ok) {
     mbNote.textContent = mb.error;
     mbNote.classList.add("error");
@@ -368,7 +383,7 @@ $("gear").addEventListener("click", () => ($("settings").hidden ? void openSetti
 $("s-close").addEventListener("click", closeSettings);
 $("s-reset-pos").addEventListener("click", () => {
   void invokeCmd("pets_reset_positions").catch(() => {});
-  $("s-reset-note").textContent = agents.size ? "Done: lined up at the bottom right." : "Done: new bots start at the bottom right.";
+  $("s-reset-note").textContent = agents.size ? t.resetDoneSome : t.resetDoneNone;
   fitWindow();
 });
 $("s-save").addEventListener("click", () => void saveSettingsFromForm());
@@ -376,7 +391,7 @@ $("s-save").addEventListener("click", () => void saveSettingsFromForm());
 $("s-skill").addEventListener("click", async () => {
   const ok = await copyText(SKILL_URL);
   $("s-skill-note").textContent = ok
-    ? "Copied. Add it to your Grok Bot skill library, or send it to a bot to update its Desk Pet skill."
+    ? t.skillCopied
     : SKILL_URL;
   fitWindow();
 });
@@ -407,7 +422,7 @@ function disarm(btn: HTMLButtonElement, label: string): void {
 
 $("s-v2-unpair").addEventListener("click", () => {
   // Unpairing silences every bot and deletes the key: ask for a second click.
-  if (!confirmed($<HTMLButtonElement>("s-v2-unpair"), "Sure? Unpair", "Unpair")) return;
+  if (!confirmed($<HTMLButtonElement>("s-v2-unpair"), t.sureUnpair, t.unpair)) return;
   closeSettings();
   void unpairV2();
 });
@@ -418,7 +433,7 @@ $("s-v2-code").addEventListener("click", async () => {
 });
 $("s-v2-new").addEventListener("click", () => {
   // Replacing a working pairing silences every bot on the old code: ask for a second click.
-  if (v2Active && !confirmed($<HTMLButtonElement>("s-v2-new"), "Sure? Old code stops", "New code")) return;
+  if (v2Active && !confirmed($<HTMLButtonElement>("s-v2-new"), t.sureNewCode, t.newCode)) return;
   closeSettings();
   void beginV2();
 });
@@ -441,30 +456,30 @@ let copyTimer: number | undefined;
 function resetCopy(): void {
   clearTimeout(copyTimer);
   const b = $<HTMLButtonElement>("copy");
-  b.textContent = "Copy";
+  b.textContent = t.copy;
   b.className = "primary";
   $("done-pair").className = "";
   $("code-card").classList.remove("copied");
 }
 $("copy").addEventListener("click", async () => {
   if (!shownV2Code) return;
-  const ok = await copyText(pasteLineV2(shownV2Code));
+  const ok = await copyText(pasteLineV2(shownV2Code, t));
   const b = $<HTMLButtonElement>("copy");
   clearTimeout(copyTimer);
   if (ok) {
-    b.innerHTML = `${CHECK_SVG}<span>Copied</span>`;
+    b.innerHTML = `${CHECK_SVG}<span>${t.copied}</span>`;
     b.className = "ok copied-btn";
     $("done-pair").className = "primary";
     $("code-card").classList.add("copied");
   } else {
-    b.textContent = "Press ⌘C to copy";
+    b.textContent = t.pressCmdC;
     const range = document.createRange();
     range.selectNodeContents($("paste-line"));
     getSelection()?.removeAllRanges();
     getSelection()?.addRange(range);
   }
   copyTimer = window.setTimeout(() => {
-    b.textContent = "Copy again";
+    b.textContent = t.copyAgain;
     b.className = "";
     $("code-card").classList.remove("copied");
   }, 1800);
@@ -487,7 +502,7 @@ async function boot(): Promise<void> {
   cfg = await loadConfig();
   await applyPetSize(); // before the first bot window opens
   void onEvent("ui:open-settings", () => void openSettings()); // menu bar icon, ⚙ or right-click on a pet
-  void appVersion().then((v) => v && setText("s-version", `Version ${v}`));
+  void appVersion().then((v) => v && setText("s-version", t.version(v)));
   mailbox = inTauri ? new TauriMailbox() : new NoMailbox();
   showPairMode();
   v2Active = mailbox.supported && (await mailbox.status().catch(() => ({ paired: false }))).paired;

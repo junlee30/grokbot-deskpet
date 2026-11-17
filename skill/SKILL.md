@@ -20,7 +20,8 @@ Status is best-effort decoration. **It must never slow down, block or break your
 Every post gives up after about 3 seconds and ignores failures.
 
 **Got this skill as a link?** The user's paste line looks like `Install the Desk Pet skill
-from https://…/SKILL.md and pair with code dp2.…`. Read this file from that link, add it to
+from https://…/SKILL.md and pair with code dp2.…` (or the same in another language, e.g.
+Korean). Read this file from that link, add it to
 your skill library as the `desk-pet` skill if you can (otherwise keep it with your standing
 instructions, so you follow it in every session), then follow section 1.
 
@@ -41,8 +42,8 @@ in a file other than the one below, in memory notes, in chat, or on a process co
    matches:
 
    ```bash
-   DP_VERSION=2.1.0
-   DP_SHA256=2eabee2652781f4773fa0bce84d41b46e9c34b5bedefdd6da4c3a2888e9a1651
+   DP_VERSION=2.2.0
+   DP_SHA256=0dfe8f9bd7b7d020495dbdf23f60217a4f0cad4a327f9aa4afe9c2e28a72e882
    DP_URL="https://raw.githubusercontent.com/junlee30/grokbot-deskpet/skill-v$DP_VERSION/skill/deskpet-publish"
    DP_LOCAL="<this skill's folder>/deskpet-publish"
    dp_ok() { node -e 'const [f, h] = process.argv.slice(1); const d = require("crypto").createHash("sha256").update(require("fs").readFileSync(f)).digest("hex"); process.exit(d === h ? 0 : 1)' "$1" "$DP_SHA256"; }
@@ -112,6 +113,9 @@ If you can't tell which profile is yours, run `init jarvis Jarvis` without `--pr
 show up as a robot and a click only brings Grok Bot to the front). `--avatar <shape>/<color>`
 and `--grokbot-id <uuid>` set those by hand; values that aren't valid are dropped.
 
+If you usually talk with the user in one language, add it: `init jarvis --profile … --lang ko`
+(section 5a).
+
 ## 3. When to post which state
 
 Post at these moments. `session` is an id for the current conversation/task (stable across
@@ -175,9 +179,10 @@ Rules for this call:
 - **Never run with `set -x`** (or any shell tracing or verbose curl, `-v`).
 - What gets sent, inside the encryption: `agent_id`, `agent_name`, `session`, `state`,
   `event`, `message` (optional), `ts` (ISO-8601), `avatar` (optional), `grokbot_id`
-  (optional, your Grok Bot agent UUID), `seq` (it rises with every post so the pet can drop
-  replays), `pv` (the publisher's version, so the pet can ask for an update) and `dropped`
-  (only after a rate limit: how many posts were lost). `deskpet-publish` adds the last three.
+  (optional, your Grok Bot agent UUID), `lang` (optional, the conversation's language),
+  `seq` (it rises with every post so the pet can drop replays), `pv` (the publisher's
+  version, so the pet can ask for an update) and `dropped` (only after a rate limit: how many
+  posts were lost). `deskpet-publish` adds the last three.
 
 ## 5. The `message` field: privacy rules
 
@@ -185,8 +190,9 @@ Rules for this call:
 on the user's desktop for a few seconds (`deskpet-publish` collapses it to one line and cuts it
 at 160). Nothing stores it except the mailbox's short-lived cache of the *encrypted* message.
 
-Only put a short, generic status there, e.g. `Running tests`, `Waiting for your approval`,
-`Build failed, see chat`, `Done: 3 files changed`.
+Only put a short, generic status there, in the conversation's language (section 5a), e.g.
+`Running tests`, `Waiting for your approval`, `Build failed, see chat`, `Done: 3 files changed`
+(in Korean: `테스트 실행 중`, `승인을 기다리는 중`, `빌드 실패, 채팅 확인`, `완료: 파일 3개 변경`).
 
 **Never** include:
 
@@ -196,6 +202,25 @@ Only put a short, generic status there, e.g. `Running tests`, `Waiting for your 
 - secrets, tokens, keys, passwords, personal data (names, emails, addresses)
 
 When in doubt, omit `message`.
+
+## 5a. Language
+
+Desk Pet speaks the language you're using with the user, the way your answers do.
+
+- **Write `message` in the language of the conversation**: if the user writes to you in
+  Korean, `"테스트 실행 중"`, not `"Running tests"`. Keep it as short as in English.
+- **Say which language it is** with a BCP 47 tag (`ko`, `en`, `ja`, `zh-Hans`, `es`, …), so
+  the pet's own text about you (its tooltip, notes, the "needs you" notification) matches:
+  set `DESK_PET_LANG` when the conversation's language is clear (normally at the start of a
+  turn, next to `DESK_PET_SESSION`), or pass `--lang <tag>` on a post:
+
+  ```bash
+  export DESK_PET_LANG=ko   # the user is writing in Korean
+  desk_pet working tool_start "테스트 실행 중"
+  ```
+
+  If the user switches language, switch `DESK_PET_LANG` with them. Without it, `init --lang`
+  (your usual language) is used. An invalid tag is dropped, never an error.
 
 ## 6. Unpairing, re-pairing and privacy
 

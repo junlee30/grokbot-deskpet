@@ -188,6 +188,7 @@ fn main() {
             pet_windows::open_settings_window,
             pet_windows::pet_menu,
             pet_windows::pet_attention,
+            pet_windows::set_ui_strings,
             pet_windows::app_quit,
             grokbot::grokbot_installed,
             grokbot_art::grokbot_art_manifest,

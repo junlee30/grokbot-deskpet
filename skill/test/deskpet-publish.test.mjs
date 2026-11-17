@@ -120,6 +120,7 @@ describe("protocol/v2.json", () => {
         now: Date.parse(want.ts),
         seq: want.seq,
         dropped: want.dropped,
+        lang: want.lang,
       });
       assert.deepEqual(got, want);
     }
@@ -431,6 +432,25 @@ describe("CLI against a fake ntfy", () => {
     assert.equal(u.code, 0);
     assert.match(u.stderr, /no bot "ghost" set up here/);
     assert.equal(fake.requests.length, n);
+  });
+
+  test("language: --lang, DESK_PET_LANG, init --lang; the post's own wins; junk is dropped", async () => {
+    for (const [input, want] of [["ko", "ko"], ["KO", "ko"], ["en-US", "en-US"], ["zh-Hant-TW", "zh-Hant-TW"]]) assert.equal(m.parseLang(input), want, input);
+    for (const bad of ["", "k", "korean", "ko_KR", "ko KR", "<b>", "en-toolongsubtag", undefined, 42]) assert.equal(m.parseLang(bad), null, String(bad));
+    assert.equal((await run(["init", "lingo", "Lingo", "--lang", "ko"], { env: env() })).code, 0);
+    const before = messages().length;
+    const cases = [
+      { args: [], env: {}, want: "ko" }, // init's usual language
+      { args: [], env: { DESK_PET_LANG: "en" }, want: "en" }, // this turn's language
+      { args: ["--lang", "ja"], env: { DESK_PET_LANG: "en" }, want: "ja" }, // the post's own
+      { args: [], env: { DESK_PET_LANG: "not a tag!" }, want: "ko" }, // junk: falls back
+    ];
+    for (const [i, c] of cases.entries()) {
+      const r = await run(["--bot", "lingo", "idle", `lang${i}`, ...c.args], { env: { ...env(), DESK_PET_SESSION: `lang-${i}`, ...c.env } });
+      assert.match(r.stderr, /sent 200/);
+    }
+    const got = messages().slice(before).map((x) => JSON.parse(m.open(pairing, x.message).toString()).lang);
+    assert.deepEqual(got, cases.map((c) => c.want));
   });
 
   test("access token: sent as a Bearer header, never printed", async () => {

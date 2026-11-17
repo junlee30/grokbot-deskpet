@@ -9,6 +9,8 @@ import { SpriteBank } from "./sprites.ts";
 import { AvatarBank } from "./avatar-bank.ts";
 import { LOCK_SVG } from "./icons.ts";
 import { pasteLineV2 } from "./connections.ts";
+import { strings, uiLocale } from "./i18n.ts";
+import { preferredLanguages } from "./platform.ts";
 
 interface Sample {
   caption: string;
@@ -18,6 +20,7 @@ interface Sample {
   offline?: boolean;
   avatar?: { shape: string; color: string };
   name?: string;
+  lang?: string;
 }
 
 const SAMPLES: Sample[] = [
@@ -29,6 +32,7 @@ const SAMPLES: Sample[] = [
   { caption: "error", state: "error", message: "Build failed: 3 tests", avatar: { shape: "pebble", color: "gray" } },
   { caption: "done", state: "done", message: "All 87 tests pass", avatar: { shape: "leaf", color: "green" }, name: "Fern" },
   { caption: "offline", state: "idle", offline: true, avatar: { shape: "blob", color: "black" } },
+  { caption: "Korean bot (lang: ko)", state: "working", message: "테스트 스위트를 실행하고 결과를 정리하는 중이에요", avatar: { shape: "heart", color: "red" }, name: "루비", lang: "ko" },
   { caption: "robot fallback, long toast", state: "thinking", message: "A very long message that should clamp to two lines with an ellipsis at the end of it" },
 ];
 
@@ -45,7 +49,7 @@ const pets: { pet: Pet; offline: boolean }[] = [];
 
 function event(s: Sample, session: string, state: PetState, now: number): StateEvent {
   const iso = new Date(now).toISOString();
-  return { agent_id: s.caption, agent_name: s.name ?? "Jarvis", session, state, event: "preview", message: s.message, ts: iso, received_at: iso, avatar: s.avatar };
+  return { agent_id: s.caption, agent_name: s.name ?? "Jarvis", session, state, event: "preview", message: s.message, ts: iso, received_at: iso, avatar: s.avatar, lang: s.lang };
 }
 
 async function main(): Promise<void> {
@@ -86,37 +90,38 @@ const FAKE_CODE = "dp2.EXAMPLE-not-a-real-code"; // too short to look like a rea
 
 function showView(doc: Document, view: (typeof VIEWS)[number]): void {
   const $ = (id: string) => doc.getElementById(id);
+  const t = strings(uiLocale(preferredLanguages()));
   for (const id of ["pair-start", "pair-code", "waiting", "settings"]) {
     const el = $(id);
     if (el) el.hidden = true;
   }
   const paired = view !== "pair-start";
   $("status-dot")!.dataset.s = paired ? "online" : "none";
-  $("status")!.textContent = paired ? "Connected · ntfy.sh" : "Not paired";
+  $("status")!.textContent = paired ? t.connected(" · ntfy.sh") : t.notPaired;
   if (view === "pair-start") {
     $("pair-start")!.hidden = false;
-    $("pair-mode")!.innerHTML = `${LOCK_SVG}<span>Private, end-to-end encrypted · via ntfy.sh</span>`;
+    $("pair-mode")!.innerHTML = `${LOCK_SVG}<span>${t.pairMode("ntfy.sh")}</span>`;
   }
   if (view === "pair-code") {
     $("pair-code")!.hidden = false;
-    $("paste-line")!.textContent = pasteLineV2(FAKE_CODE);
-    $("pair-note")!.textContent = "It works for any number of bots. The code is the key to your pets: share it only with your own bots.";
+    $("paste-line")!.textContent = pasteLineV2(FAKE_CODE, t);
+    $("pair-note")!.textContent = t.pairNote;
   }
   if (view === "waiting") {
     $("waiting")!.hidden = false;
-    $("w-sub")!.textContent = "Paste the pairing message to a Grok Bot. Its pet pops up on your desk the moment it posts.";
+    $("w-sub")!.textContent = t.waitingFirstSub;
     $("w-code")!.hidden = false;
   }
   if (view === "settings") {
     $("settings")!.hidden = false;
     $("gear")!.setAttribute("aria-pressed", "true");
-    $("s-v2-state")!.textContent = "Paired · ntfy.sh";
+    $("s-v2-state")!.textContent = t.paired("ntfy.sh", false);
     for (const b of ["s-v2-code", "s-v2-unpair", "s-v2-new"]) ($(b) as HTMLButtonElement).disabled = false;
     ($("s-mailbox") as HTMLInputElement).value = "https://ntfy.sh";
-    $("s-mailbox-note")!.textContent = "Used for the next new code.";
+    $("s-mailbox-note")!.textContent = t.mailboxNote;
     (doc.querySelector('input[name="s-size"][value="large"]') as HTMLInputElement).checked = true;
     (doc.getElementById("s-notify") as HTMLInputElement).checked = true;
-    $("s-version")!.textContent = "Version 0.3.0";
+    $("s-version")!.textContent = t.version("0.4.0");
   }
 }
 
@@ -124,7 +129,8 @@ function controls(): void {
   for (const v of VIEWS) {
     const cell = document.createElement("div");
     const f = document.createElement("iframe");
-    f.src = `/index.html?preview=${v}`;
+    const lang = new URLSearchParams(location.search).get("lang");
+    f.src = `/index.html?preview=${v}${lang ? `&lang=${encodeURIComponent(lang)}` : ""}`;
     f.style.cssText = "width:408px;height:440px;border:0;background:transparent";
     f.setAttribute("allowtransparency", "true");
     f.addEventListener("load", () => setTimeout(() => showView(f.contentDocument!, v), 400));

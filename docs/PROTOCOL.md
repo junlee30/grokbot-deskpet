@@ -77,9 +77,10 @@ What a bot sends, inside the encryption (`deskpet-publish` builds and checks it)
 | `seq`        | int    | added by the publisher; strictly increasing per `agent_id` + `session` |
 | `pv`         | string | added by the publisher: its version, `x.y.z`; anything else is dropped. Missing or older than `protocol/v2.json`'s `publisher_version`: the pet asks for an update |
 | `dropped`    | int    | added by the publisher after a rate limit: posts lost (1 to 1,000,000); otherwise absent |
+| `lang`       | string | optional, the language the bot is using with the user, BCP 47 (`ko`, `en-US`, `zh-Hant-TW`: a 2-3 letter language, up to three 1-8 character subtags); anything else is dropped. `--lang`, `DESK_PET_LANG` or `init --lang` |
 
 The pet keeps the latest avatar and `grokbot_id` per bot. An event that breaks a rule is
-dropped (except a bad `grokbot_id`, `pv` or `dropped`, which are only left out); unknown
+dropped (except a bad `grokbot_id`, `pv`, `dropped` or `lang`, which are only left out); unknown
 fields are ignored (they are authenticated, so newer bots can add some) and never reach the UI.
 
 These rules, the avatar lists, the size limits and a fixed crypto vector live in
