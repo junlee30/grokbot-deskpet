@@ -1,12 +1,15 @@
 // Desk Pet for Grok Bot (unofficial, working title).
 //
-// Rust side: the transparent always-on-top window, window-position memory, the opener plugin
+// Rust side: the main (pairing + settings) window and its position memory, one transparent
+// always-on-top window per bot (pet_windows.rs, pets.rs), the menu bar icon, the opener plugin
 // and the v2 private-mailbox client (ntfy SSE + XChaCha20-Poly1305, pairing in the macOS
-// Keychain). The webview gets status/state events, and sees the pairing string only to
-// show/copy the paste line.
+// Keychain). The webviews get status/state events; only the main window sees the pairing
+// string, and only to show/copy the paste line.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod mailbox;
+mod pet_windows;
+mod pets;
 mod secrets;
 mod stream;
 mod v2;
@@ -59,10 +62,14 @@ fn start_mailbox(app: &AppHandle, http: &reqwest::Client, st: &MailboxState, p: 
     let a = app.clone();
     let sink: mailbox::Sink = Arc::new(move |o| match o {
         mailbox::Out::Status { status, detail } => {
-            let _ = a.emit("mailbox:status", mailbox::status_json(status, detail));
+            let s = mailbox::status_json(status, detail);
+            pet_windows::set_status(&a, s.clone());
+            let _ = a.emit("mailbox:status", s); // every window: pets dim when offline
         }
         mailbox::Out::State(v) => {
-            let _ = a.emit("mailbox:state", v);
+            // The main window only counts bots; each bot's own window draws it.
+            let _ = a.emit_to("main", "mailbox:state", v.clone());
+            pet_windows::on_state(&a, v);
         }
     });
     let mut slot = st.0.lock().unwrap();
@@ -76,11 +83,13 @@ fn start_mailbox(app: &AppHandle, http: &reqwest::Client, st: &MailboxState, p: 
 /// subscription started immediately. Returns the pairing string for the paste line.
 #[tauri::command]
 async fn v2_pair_new(
+    window: tauri::WebviewWindow,
     app: AppHandle,
     http: State<'_, Http>,
     st: State<'_, MailboxState>,
     mailbox_url: String,
 ) -> Result<String, String> {
+    pet_windows::require_main(&window)?;
     let p = v2::Pairing::generate(&mailbox_url)?;
     let p2 = p.clone();
     blocking(move || secrets::v2_set(&p2)).await?;
@@ -90,7 +99,8 @@ async fn v2_pair_new(
 
 /// The current pairing string (to show the paste line again, e.g. for another bot computer).
 #[tauri::command]
-async fn v2_pairing_code() -> Result<Option<String>, String> {
+async fn v2_pairing_code(window: tauri::WebviewWindow) -> Result<Option<String>, String> {
+    pet_windows::require_main(&window)?;
     Ok(blocking(secrets::v2_get).await?.map(|p| p.encode()))
 }
 
@@ -114,7 +124,8 @@ fn v2_stream_stop(st: State<'_, MailboxState>) {
 /// Unpair v2: stop and delete topic + key. Bots still holding the old code publish into a
 /// topic nobody reads any more; a new code is a new topic and key.
 #[tauri::command]
-async fn v2_unpair(st: State<'_, MailboxState>) -> Result<(), String> {
+async fn v2_unpair(window: tauri::WebviewWindow, st: State<'_, MailboxState>) -> Result<(), String> {
+    pet_windows::require_main(&window)?;
     if let Some(h) = st.0.lock().unwrap().take() {
         h.stop();
     }
@@ -173,6 +184,8 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .manage(Http(stream::http_client()))
         .manage(MailboxState::default())
+        .manage(pet_windows::PetWindows::default())
+        .on_menu_event(|app, ev| pet_windows::on_menu(app, ev.id().as_ref()))
         .invoke_handler(tauri::generate_handler![
             v2_normalize_url,
             v2_status,
@@ -182,17 +195,29 @@ fn main() {
             v2_stream_stop,
             v2_unpair,
             v2_reconnect_now,
+            pet_windows::pet_init,
+            pet_windows::pets_set_size,
+            pet_windows::pets_close_all,
+            pet_windows::pets_reset_positions,
+            pet_windows::open_settings_window,
+            pet_windows::pet_menu,
+            pet_windows::app_quit,
         ])
         .setup(|app| {
             // A desk pet should not take a Dock slot or the app switcher on macOS.
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             cleanup_v1_once(app.handle());
+            pet_windows::init(app.handle());
+            if let Err(e) = pet_windows::tray(app.handle()) {
+                log_line(app.handle(), &format!("menu bar icon unavailable: {e}"));
+            }
             if let Some(w) = app.get_webview_window("main") {
                 window_state::restore(&w);
                 window_state::track(&w);
                 let _ = w.show();
             }
+            pet_windows::selftest(app.handle());
             Ok(())
         })
         .run(tauri::generate_context!())

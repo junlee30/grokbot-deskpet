@@ -359,7 +359,8 @@ data: {"id":"o","time":1,"event":"open","topic":"t"}
 
     /// End to end with the real publisher script and a mailbox (local fake ntfy or ntfy.sh).
     /// Run via scripts/e2e-v2.sh, which sets DESKPET_E2E_MAILBOX (and starts the fake if local).
-    /// Publishes N events with skill/deskpet-publish and expects to decrypt all of them here.
+    /// Publishes N events with skill/deskpet-publish from two bots (alternating) and expects to
+    /// decrypt all of them here, then routes them as the app does: one pet window per bot.
     #[tokio::test(flavor = "multi_thread")]
     #[ignore]
     async fn e2e_publish_script_to_pet_client() {
@@ -400,10 +401,12 @@ data: {"id":"o","time":1,"event":"open","topic":"t"}
         assert!(child.wait().unwrap().success(), "pair");
         let states = ["thinking", "working", "juggling", "needs_you", "done"];
         let t0 = Instant::now();
+        let bots = [("e2e-bot", "E2E Bot"), ("e2e-bot2", "E2E Bot 2")];
         for i in 0..n {
             let st = states[i % states.len()];
+            let (id, name) = bots[i % bots.len()];
             let out = Command::new(script)
-                .args(["e2e-bot", "E2E Bot", st, "e2e_step", &format!("step {}", i + 1), "--avatar", "star/blue"])
+                .args([id, name, st, "e2e_step", &format!("step {}", i + 1), "--avatar", "star/blue"])
                 .env("DESK_PET_HOME", &home)
                 .env("DESK_PET_SESSION", "e2e-1")
                 .env("DESK_PET_DEBUG", "1")
@@ -426,9 +429,38 @@ data: {"id":"o","time":1,"event":"open","topic":"t"}
         println!("e2e: {} published in {publish_ms} ms, {} decrypted", n, got.len());
         assert_eq!(got.len(), n, "every published event decrypted");
         for (i, v) in got.iter().enumerate() {
+            assert_eq!(v["agent_id"], bots[i % bots.len()].0);
             assert_eq!(v["state"], states[i % states.len()]);
             assert_eq!(v["message"], format!("step {}", i + 1));
             assert_eq!(v["avatar"], json!({"shape": "star", "color": "blue"}));
+        }
+
+        // Window lifecycle, as pet_windows::on_state does it: the first event of each bot opens
+        // its own window at a free spot; every later event goes to that bot's window only.
+        use crate::pets::{self, label_for, place_new, route_event, Rect, Route, Store};
+        let (mons, work) = ([Rect::new(0, 0, 1512, 982)], [Rect::new(0, 33, 1512, 879)]);
+        let size = (184, 158);
+        let (mut open, mut store, mut delivered) = (Vec::<String>::new(), Store::default(), 0);
+        for v in got.iter() {
+            let agent = v["agent_id"].as_str().unwrap();
+            match route_event(&open, agent, pets::MAX_PET_WINDOWS) {
+                Route::Create => {
+                    let pos = place_new(store.get(agent), size, &mons, &work, &store.others(agent, size));
+                    store.set(agent, pos);
+                    open.push(agent.to_string());
+                    println!("e2e window: {} opened at {:?}", label_for(agent).unwrap(), pos);
+                }
+                Route::Deliver => delivered += 1,
+                Route::Ignore => panic!("dropped {agent}"),
+            }
+        }
+        let want = bots.len().min(n);
+        println!("e2e windows: {} opened, {} later events delivered to their own window", open.len(), delivered);
+        assert_eq!(open.len(), want, "one window per bot");
+        assert_eq!(delivered, n - want);
+        if want == 2 {
+            let (a, b) = (store.get(&open[0]).unwrap(), store.get(&open[1]).unwrap());
+            assert!(!Rect::at(a, size).intersects(&Rect::at(b, size)), "the two bots' windows overlap");
         }
     }
 }

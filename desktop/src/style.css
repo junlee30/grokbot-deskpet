@@ -44,7 +44,7 @@ canvas {
   image-rendering: crisp-edges;
 }
 
-/* Pets are absolutely placed in columns computed by src/layout.ts (one column per pet). */
+/* Each bot has its own window (pet.html); its pet is placed in it by src/layout.ts. */
 .stage {
   position: absolute;
   inset: 0;
@@ -189,23 +189,6 @@ canvas {
   }
 }
 
-.more {
-  position: absolute;
-  right: 6px;
-  bottom: 24px;
-  padding: 1px 6px;
-  border-radius: 8px;
-  background: var(--glass);
-  border: 1px solid var(--edge);
-  font-size: 10px;
-  color: var(--muted);
-  pointer-events: none;
-}
-
-.more[hidden] {
-  display: none;
-}
-
 /* Mailbox unreachable: pets dim (and use the offline sprite) until the stream is back. */
 #app.offline .pet canvas {
   opacity: 0.55;
@@ -257,6 +240,17 @@ canvas {
 #app:hover .gear,
 #app[data-view="pair-start"] .gear {
   opacity: 1;
+}
+
+/* A bot's own window: a small ⚙ in the free corner beside the pet (the toast is above it). */
+#app[data-kind="pet"] .gear {
+  top: auto;
+  bottom: 6px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  font-size: 11px;
+  border-radius: 5px;
 }
 
 .card {

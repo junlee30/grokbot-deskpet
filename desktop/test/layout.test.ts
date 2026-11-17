@@ -2,14 +2,19 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  BOTTOM_PAD,
   EDGE,
+  LABEL_H,
+  LABEL_OVERLAP,
+  LABEL_OVERLAP_PX,
   layoutPets,
   layoutToast,
   maxPets,
-  orderPets,
   overlaps,
+  petWindowSize,
   pickScale,
   TOAST_MAX_H,
+  TOAST_OVERLAP,
   toastMaxWidth,
   type Box,
   type PetSize,
@@ -48,15 +53,24 @@ describe("pet layout", () => {
     assert.equal(pickScale(10, "large"), 1);
   });
 
-  it("keeps a remembered order, newcomers last in arrival order", () => {
-    assert.deepEqual(orderPets(["scout", "jarvis", "new1", "claude", "new2"], ["jarvis", "claude", "scout"]), [
-      "jarvis",
-      "claude",
-      "scout",
-      "new1",
-      "new2",
-    ]);
-    assert.deepEqual(orderPets([], ["a"]), []);
+  it("sizes one bot's own window to fit its pet, its toast or working label, and its name", () => {
+    assert.deepEqual(petWindowSize("large"), { width: 184, height: 158 });
+    assert.deepEqual(petWindowSize("small"), { width: 152, height: 126 });
+    for (const pref of ["large", "small"] as PetSize[]) {
+      const { width, height } = petWindowSize(pref);
+      const [s, ...rest] = layoutPets(1, width, height, pref);
+      assert.equal(rest.length, 0);
+      assert.equal(s!.scale, pref === "large" ? 3 : 2, "the preferred size fits");
+      assert.ok(s!.spriteTop >= 0);
+      // the name label sits under the sprite, inside the window
+      assert.ok(s!.spriteTop + s!.spriteSize + LABEL_H - LABEL_OVERLAP + BOTTOM_PAD <= height);
+      for (const overlap of [TOAST_OVERLAP, LABEL_OVERLAP_PX]) {
+        const b = layoutToast(s!, 10_000, 10_000, width, height, overlap);
+        assert.equal(b.height, TOAST_MAX_H, `${pref}: a full 2-line toast is not squeezed`);
+        assert.ok(b.top >= EDGE && b.left >= EDGE && b.left + b.width <= width - EDGE, `${pref}: clipped ${JSON.stringify(b)}`);
+        assert.ok(b.top + b.height <= s!.spriteTop + overlap, `${pref}: covers more of the pet than allowed`);
+      }
+    }
   });
 });
 

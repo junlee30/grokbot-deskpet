@@ -1,20 +1,20 @@
-import { loadConfig, saveSettings, safeUrl, urlForAgent, v2State, type DeskPetConfig } from "./config.ts";
+// The main window: pairing, settings, connection status, and "waiting for your bot" while no
+// bot has posted. Every bot is drawn in its own window (pet.html, src/pet-main.ts), opened and
+// placed by the Rust side; this window hides itself while only the pets are needed.
+import { loadConfig, saveSettings, safeUrl, v2State, type DeskPetConfig } from "./config.ts";
 import { bootView, pasteLineV2, statusLine, type Conn } from "./connections.ts";
 import type { ConnStatus, StateEvent } from "./events.ts";
-import { layoutPets, orderPets, type PetSize } from "./layout.ts";
+import { petWindowSize, type PetSize } from "./layout.ts";
 import { NoMailbox, TauriMailbox, type Mailbox, type MailboxHandlers } from "./mailbox.ts";
 import { DEFAULT_MAILBOX, validateMailboxUrl } from "./net.ts";
-import { Pet } from "./pets.ts";
-import { copyText, inTauri, openExternal, quitApp, startWindowDrag } from "./platform.ts";
+import { mainWindowVisible } from "./petwin.ts";
+import { broadcast, copyText, inTauri, invokeCmd, onEvent, quitApp, setWindowVisible, startWindowDrag } from "./platform.ts";
 import { SpriteBank } from "./sprites.ts";
-import { AvatarBank } from "./avatar-bank.ts";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
-  <div class="stage" id="stage" data-tauri-drag-region></div>
   <div class="hint" id="hint" data-tauri-drag-region></div>
   <div class="status" id="status"></div>
-  <div class="more" id="more" hidden></div>
   <button class="gear" id="gear" title="Settings" aria-label="Settings">&#9881;</button>
 
   <section class="card" id="pair-start" hidden>
@@ -53,6 +53,10 @@ app.innerHTML = `
     <label>Click opens <input id="s-default" spellcheck="false" /></label>
     <label>Per-bot links <textarea id="s-agents" rows="1" spellcheck="false" placeholder="jarvis=https://grok.com"></textarea></label>
     <label>Pet size <select id="s-size"><option value="large">Large</option><option value="small">Small</option></select></label>
+    <div class="presets">
+      <button type="button" class="chip" id="s-reset-pos">Reset pet positions</button>
+      <span class="small" id="s-reset-note">Each bot has its own window: drag it anywhere.</span>
+    </div>
     <div class="row">
       <button class="primary" id="s-save">Save</button>
       <button id="s-quit">Quit</button>
@@ -62,18 +66,16 @@ app.innerHTML = `
 `;
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
-const stage = $<HTMLDivElement>("stage");
 const hint = $<HTMLDivElement>("hint");
 const statusEl = $<HTMLDivElement>("status");
 
 let cfg: DeskPetConfig;
 const bank = new SpriteBank();
-const art = new AvatarBank(); // Grok Bot avatar art, if it was imported at build time
-const pets = new Map<string, Pet>();
+/** Bots heard from on this pairing (each has its own window, opened by the Rust side). */
+const agents = new Set<string>();
 let mailbox: Mailbox; // the v2 private mailbox
 let v2Active = false; // a pairing is in the keychain and we subscribe to its topic
 let connV2: Conn | null = null;
-let conn: ConnStatus = "connecting";
 let view: "pair-start" | "pair-code" | "pets" = "pair-start";
 /** The code on the pair-code card: in memory only while the card is visible. */
 let shownV2Code: string | null = null;
@@ -87,14 +89,43 @@ function show(v: typeof view): void {
   }
   $("pair-start").hidden = v !== "pair-start";
   $("pair-code").hidden = v !== "pair-code";
-  stage.hidden = v !== "pets";
   hint.hidden = v !== "pets";
   app.dataset.view = v;
+  syncMain();
+}
+
+const WAITING = "Paired. Waiting for your Grok Bot…";
+const WAITING_V2 = "Paired. Waiting for your Grok Bot… (⚙ → Show code)";
+
+/** The hint, whether this window is on screen, and whether the mini pet animates. */
+function syncMain(): void {
+  if (view === "pets") {
+    const want = agents.size > 0 ? "" : v2Active && !v2State.seen() ? WAITING_V2 : WAITING;
+    if (hint.textContent !== want) hint.textContent = want;
+  }
+  applyVisible(mainWindowVisible({ view, settingsOpen: !$("settings").hidden, pets: agents.size }));
+  if (view === "pair-start") startMini();
+}
+
+/** Show/hide this window, one call at a time, ending on the latest wish. */
+let wantVisible = true;
+let applyingVisible = false;
+function applyVisible(v: boolean): void {
+  wantVisible = v;
+  if (applyingVisible) return;
+  applyingVisible = true;
+  void (async () => {
+    for (;;) {
+      const target = wantVisible;
+      await setWindowVisible(target).catch(() => {});
+      if (wantVisible === target) break;
+    }
+    applyingVisible = false;
+  })();
 }
 
 function renderStatus(): void {
   const c = statusLine(v2Active ? connV2 : null);
-  conn = c.status;
   app.classList.toggle("offline", c.status === "offline");
   statusEl.textContent = c.text;
 }
@@ -156,10 +187,11 @@ function markSeenV2(): void {
   if (view === "pair-start" || (view === "pair-code" && shownV2IsNew)) show("pets");
 }
 
+/** Close every bot's window (unpair, new code). Their saved positions stay. */
 function dropAllPets(): void {
-  for (const p of pets.values()) p.remove();
-  pets.clear();
-  relayout();
+  agents.clear();
+  void invokeCmd("pets_close_all").catch(() => {});
+  syncMain();
 }
 
 /** Stop and delete the pairing (topic + key): back to Connect. */
@@ -183,63 +215,16 @@ const mailboxHandlers: MailboxHandlers = {
 };
 
 function handleState(e: StateEvent): void {
-  let pet = pets.get(e.agent_id);
-  if (!pet) {
-    pet = new Pet(e.agent_id, e.agent_name || e.agent_id, cfg, art);
-    pets.set(e.agent_id, pet);
-    stage.append(pet.el);
-    stage.append(pet.bubble);
-    wirePet(pet);
-    if (!cfg.petOrder.includes(e.agent_id)) {
-      cfg.petOrder = [...cfg.petOrder, e.agent_id].slice(-64);
-      saveSettings({ petOrder: cfg.petOrder });
-    }
-    relayout();
-  }
-  pet.update(e, Date.now(), cfg.toastMs);
-}
-
-/** Columns per pet (pure layout in layout.ts); pets that don't fit are summarised as "+N". */
-function relayout(): void {
-  const ids = orderPets([...pets.keys()], cfg.petOrder);
-  const w = stage.clientWidth || window.innerWidth;
-  const h = stage.clientHeight || window.innerHeight;
-  const slots = layoutPets(ids.length, w, h, cfg.petSize);
-  ids.forEach((id, i) => pets.get(id)!.place(slots[i] ?? null));
-  const hidden = ids.length - slots.length;
-  const more = $("more");
-  more.hidden = hidden <= 0;
-  more.textContent = hidden > 0 ? `+${hidden} more` : "";
-}
-window.addEventListener("resize", relayout);
-
-// ---------- pet interaction: click opens a link, drag moves the window ----------
-function wirePet(pet: Pet): void {
-  let down: { x: number; y: number } | null = null;
-  pet.el.addEventListener("pointerdown", (ev) => {
-    if (ev.button !== 0) return;
-    down = { x: ev.screenX, y: ev.screenY };
-  });
-  pet.el.addEventListener("pointermove", (ev) => {
-    if (!down) return;
-    if (Math.hypot(ev.screenX - down.x, ev.screenY - down.y) > 4) {
-      down = null;
-      void startWindowDrag();
-    }
-  });
-  pet.el.addEventListener("pointerup", () => {
-    if (!down) return;
-    down = null;
-    void openExternal(urlForAgent(cfg, pet.id));
-  });
-  pet.el.addEventListener("pointerleave", () => (down = null));
+  if (agents.has(e.agent_id)) return;
+  agents.add(e.agent_id); // its window is opened by the Rust side
+  syncMain();
 }
 
 // Dragging on any non-interactive background moves the window.
 app.addEventListener("mousedown", (ev) => {
   if (ev.button !== 0) return;
   const t = ev.target as HTMLElement;
-  if (t.closest("button, input, textarea, a, label, .pet, .paste, .settings")) return;
+  if (t.closest("button, input, textarea, a, label, .paste, .settings")) return;
   void startWindowDrag();
 });
 
@@ -268,8 +253,21 @@ async function openSettings(): Promise<void> {
     .map(([k, v]) => `${k}=${v}`)
     .join("\n");
   $<HTMLSelectElement>("s-size").value = cfg.petSize;
+  $("s-reset-note").textContent = "Each bot has its own window: drag it anywhere.";
   await refreshConnRows();
   $("settings").hidden = false;
+  syncMain();
+}
+
+function closeSettings(): void {
+  $("settings").hidden = true;
+  syncMain();
+}
+
+/** Every bot's window is sized for the pet size (Rust resizes open ones in place). */
+function applyPetSize(): Promise<unknown> {
+  const { width, height } = petWindowSize(cfg.petSize);
+  return invokeCmd("pets_set_size", { width, height }).catch(() => {});
 }
 
 async function saveSettingsFromForm(): Promise<void> {
@@ -294,22 +292,27 @@ async function saveSettingsFromForm(): Promise<void> {
     petSize: size === "small" ? "small" : "large",
   });
   cfg = await loadConfig();
-  $("settings").hidden = true;
+  await applyPetSize();
+  void broadcast("deskpet:config").catch(() => {}); // the pets reload their settings
+  closeSettings();
   showPairMode();
-  relayout();
 }
 
-$("gear").addEventListener("click", () => ($("settings").hidden ? void openSettings() : ($("settings").hidden = true)));
-$("s-close").addEventListener("click", () => ($("settings").hidden = true));
+$("gear").addEventListener("click", () => ($("settings").hidden ? void openSettings() : closeSettings()));
+$("s-close").addEventListener("click", closeSettings);
+$("s-reset-pos").addEventListener("click", () => {
+  void invokeCmd("pets_reset_positions").catch(() => {});
+  $("s-reset-note").textContent = agents.size ? "Done: lined up at the bottom right." : "Done: new bots start at the bottom right.";
+});
 $("s-save").addEventListener("click", () => void saveSettingsFromForm());
 $("s-ntfy").addEventListener("click", () => ($<HTMLInputElement>("s-mailbox").value = DEFAULT_MAILBOX));
 $("s-v2-unpair").addEventListener("click", () => {
-  $("settings").hidden = true;
+  closeSettings();
   void unpairV2();
 });
 $("s-v2-code").addEventListener("click", async () => {
   const code = await mailbox.code();
-  $("settings").hidden = true;
+  closeSettings();
   if (code) showCodeV2(code, false);
 });
 $("s-v2-new").addEventListener("click", () => {
@@ -327,7 +330,7 @@ $("s-v2-new").addEventListener("click", () => {
   }
   delete btn.dataset.confirm;
   clearTimeout(confirmNewTimer);
-  $("settings").hidden = true;
+  closeSettings();
   void beginV2();
 });
 $("s-quit").addEventListener("click", () => void quitApp());
@@ -355,28 +358,23 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") reconnectNow();
 });
 
-// ---------- render loop ----------
-const WAITING = "Paired. Waiting for your Grok Bot…";
-const WAITING_V2 = "Paired. Waiting for your Grok Bot… (⚙ → Show code)";
-function frame(): void {
-  const now = Date.now();
-  const offline = conn === "offline";
-  for (const p of pets.values()) p.draw(bank, now, cfg, offline);
-  if (view === "pets") {
-    if (pets.size > 0) hint.textContent = "";
-    else {
-      const want = v2Active && !v2State.seen() ? WAITING_V2 : WAITING;
-      if (!hint.textContent || ((hint.textContent === WAITING || hint.textContent === WAITING_V2) && hint.textContent !== want)) {
-        hint.textContent = want;
-      }
-    }
+// ---------- the mini pet on the Connect card (the only animation in this window) ----------
+let miniRunning = false;
+function startMini(): void {
+  if (miniRunning) return;
+  miniRunning = true;
+  requestAnimationFrame(miniFrame);
+}
+function miniFrame(): void {
+  if (view !== "pair-start") {
+    miniRunning = false;
+    return;
   }
-  drawMini(now);
-  requestAnimationFrame(frame);
+  drawMini(Date.now());
+  requestAnimationFrame(miniFrame);
 }
 
 function drawMini(now: number): void {
-  if (view !== "pair-start") return;
   const c = $<HTMLCanvasElement>("mini");
   const ctx = c.getContext("2d")!;
   ctx.imageSmoothingEnabled = false;
@@ -392,8 +390,10 @@ function drawMini(now: number): void {
 async function boot(): Promise<void> {
   app.classList.toggle("web", !inTauri);
   cfg = await loadConfig();
+  await applyPetSize(); // before the first bot window opens
+  void onEvent("ui:open-settings", () => void openSettings()); // menu bar icon, ⚙ or right-click on a pet
   try {
-    await Promise.all([bank.load(), art.load()]);
+    await bank.load();
   } catch {
     statusEl.textContent = "sprites failed to load";
   }
@@ -421,8 +421,7 @@ async function boot(): Promise<void> {
     });
   }
   renderStatus();
-  relayout();
-  requestAnimationFrame(frame);
+  syncMain();
 }
 
 window.addEventListener("error", (e) => console.warn("deskpet error", e.message));

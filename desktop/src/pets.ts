@@ -7,6 +7,7 @@ import { displayFor, eventOrder, type Session } from "./sessions.ts";
 import { accentFor, type AnimState, type SpriteBank } from "./sprites.ts";
 import { accentHex, AVATAR_DONE_MS, avatarCue, avatarGeometry, colorHex, FacePlayer, parseAvatar, type Avatar } from "./avatar.ts";
 import { drawAvatar, type AvatarBank } from "./avatar-bank.ts";
+import { samePixels } from "./petwin.ts";
 
 const MAX_SESSIONS = 16;
 
@@ -37,6 +38,15 @@ export class Pet {
   readonly bubble: HTMLDivElement;
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
+  /**
+   * Frames are drawn here first and copied to the visible canvas only when a pixel changed:
+   * a resting pet then leaves its window untouched (nothing to repaint or composite).
+   */
+  private readonly scratch: HTMLCanvasElement;
+  private readonly paint: CanvasRenderingContext2D;
+  private shownPixels: Uint32Array | null = null;
+  /** What the scratch canvas was last painted from (same inputs: same pixels, skip it). */
+  private paintedKey = "";
   private readonly label: HTMLDivElement;
   private readonly bubbleText: HTMLSpanElement;
 
@@ -63,6 +73,11 @@ export class Pet {
     this.canvas.height = 32;
     this.ctx = this.canvas.getContext("2d")!;
     this.ctx.imageSmoothingEnabled = false;
+    this.scratch = document.createElement("canvas");
+    this.scratch.width = 32;
+    this.scratch.height = 32;
+    this.paint = this.scratch.getContext("2d", { willReadFrequently: true })!;
+    this.paint.imageSmoothingEnabled = false;
     this.label = document.createElement("div");
     this.label.className = "name";
     this.label.textContent = name;
@@ -198,6 +213,11 @@ export class Pet {
       this.canvas.width = backing;
       this.canvas.height = backing;
       this.ctx.imageSmoothingEnabled = false;
+      this.scratch.width = backing;
+      this.scratch.height = backing;
+      this.paint.imageSmoothingEnabled = false;
+      this.shownPixels = null;
+      this.paintedKey = "";
     }
   }
 
@@ -213,13 +233,15 @@ export class Pet {
     if (strip === null) return false;
     this.setMode("avatar", g.backing);
     if (strip === "pending") {
-      this.ctx.clearRect(0, 0, g.backing, g.backing);
+      this.paintIf("pending", () => this.paint.clearRect(0, 0, g.backing, g.backing));
       return true;
     }
     const t = now - this.anim.start;
     if (want === "done" && t >= AVATAR_DONE_MS) this.playedDoneSeq = this.doneSeq;
     const cue = avatarCue(want, t, g);
-    drawAvatar(this.ctx, strip, g, this.face.frameAt(cue.face, now), cue);
+    const face = this.face.frameAt(cue.face, now);
+    const key = `avatar|${g.backing}|${g.res}|${av.shape}|${colorHex(av.color, art.palette)}|${face}|${JSON.stringify(cue)}`;
+    this.paintIf(key, () => drawAvatar(this.paint, strip, g, face, cue));
     return true;
   }
 
@@ -231,9 +253,30 @@ export class Pet {
     if (!this.slot) return;
     const want = this.renderState(now, cfg, offline);
     if (want !== this.anim.state) this.anim = { state: want, start: now };
-    this.el.dataset.state = want;
+    if (this.el.dataset.state !== want) this.el.dataset.state = want;
     this.syncBubble(now, want, cfg.staleActiveMs);
-    if (this.drawAvatarFrame(want, now)) return;
+    if (!this.drawAvatarFrame(want, now)) this.drawRobotFrame(bank, want, now);
+  }
+
+  /** Paint the scratch frame and show it, unless it was already painted from the same inputs. */
+  private paintIf(key: string, paint: () => void): void {
+    if (key === this.paintedKey) return;
+    this.paintedKey = key;
+    paint();
+    this.present();
+  }
+
+  /** Copy the scratch frame to the visible canvas if any pixel differs from what is shown. */
+  private present(): void {
+    const { width: w, height: h } = this.scratch;
+    const px = new Uint32Array(this.paint.getImageData(0, 0, w, h).data.buffer);
+    if (this.shownPixels && samePixels(this.shownPixels, px)) return;
+    this.shownPixels = px;
+    this.ctx.clearRect(0, 0, w, h);
+    this.ctx.drawImage(this.scratch, 0, 0);
+  }
+
+  private drawRobotFrame(bank: SpriteBank, want: AnimState, now: number): void {
     this.setMode("robot", 32);
     const def = bank.defs[want];
     if (!def) return;
@@ -244,7 +287,9 @@ export class Pet {
       if (want === "done") this.playedDoneSeq = this.doneSeq;
     }
     const sheet = bank.sheet(want, this.accent);
-    this.ctx.clearRect(0, 0, 32, 32);
-    if (sheet) this.ctx.drawImage(sheet, frame * bank.fw, 0, bank.fw, bank.fh, 0, 0, bank.fw, bank.fh);
+    this.paintIf(`robot|${want}|${frame}|${this.accent}|${sheet ? 1 : 0}`, () => {
+      this.paint.clearRect(0, 0, 32, 32);
+      if (sheet) this.paint.drawImage(sheet, frame * bank.fw, 0, bank.fw, bank.fh, 0, 0, bank.fw, bank.fh);
+    });
   }
 }

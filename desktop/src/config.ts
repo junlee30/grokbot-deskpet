@@ -13,9 +13,8 @@ export interface DeskPetConfig {
   sleepAfterMs: number;
   staleActiveMs: number;
   toastMs: number;
-  /** Layout prefs (persisted): preferred pet size and the remembered left-to-right order. */
+  /** Pet size (persisted); each bot's window is sized for it (layout.ts petWindowSize). */
   petSize: PetSize;
-  petOrder: string[];
 }
 
 const SETTINGS_KEY = "deskpet.settings";
@@ -28,10 +27,9 @@ export const DEFAULTS: DeskPetConfig = {
   staleActiveMs: 10 * 60_000,
   toastMs: 5000,
   petSize: "large",
-  petOrder: [],
 };
 
-export type Settings = Partial<Pick<DeskPetConfig, "mailboxUrl" | "openUrls" | "petSize" | "petOrder">>;
+export type Settings = Partial<Pick<DeskPetConfig, "mailboxUrl" | "openUrls" | "petSize">>;
 
 function readSettings(): Settings {
   try {
@@ -76,7 +74,6 @@ export async function loadConfig(): Promise<DeskPetConfig> {
   if (s.mailboxUrl) cfg.mailboxUrl = s.mailboxUrl;
   if (s.openUrls) cfg.openUrls = { default: s.openUrls.default || cfg.openUrls.default, agents: { ...cfg.openUrls.agents, ...s.openUrls.agents } };
   if (s.petSize === "large" || s.petSize === "small") cfg.petSize = s.petSize;
-  if (Array.isArray(s.petOrder)) cfg.petOrder = s.petOrder.filter((x) => typeof x === "string").slice(0, 64);
   const mb = validateMailboxUrl(cfg.mailboxUrl);
   cfg.mailboxUrl = mb.ok ? mb.url : DEFAULTS.mailboxUrl;
   return cfg;

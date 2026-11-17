@@ -1,8 +1,9 @@
 // Pure layout for pets and their toasts. No DOM: unit-tested with node:test (test/layout.test.ts).
 //
-// The window is split into one column per pet. A pet's toast lives inside its own column,
-// above its own pet, clamped to the window, so toasts can never overlap each other or get
-// clipped by the window edge. Text is limited to TOAST_LINES lines (CSS line-clamp + ellipsis).
+// Each bot has its own window (petWindowSize) with one column in it. The pet's toast lives in
+// that column, above the pet, clamped to the window, so it is never clipped by the window
+// edge and never covers another bot. Text is limited to TOAST_LINES lines (CSS line-clamp +
+// ellipsis).
 
 export type PetSize = "large" | "small";
 
@@ -98,13 +99,18 @@ export function layoutToast(slot: Slot, measuredW: number, measuredH: number, wi
   return { left, top, width, height };
 }
 
-/** Pets in a stable order: remembered order first, then newcomers in arrival order. */
-export function orderPets(ids: string[], remembered: string[]): string[] {
-  const rank = new Map(remembered.map((id, i) => [id, i]));
-  return ids
-    .map((id, i) => ({ id, i }))
-    .sort((a, b) => (rank.get(a.id) ?? 1e6 + a.i) - (rank.get(b.id) ?? 1e6 + b.i))
-    .map((x) => x.id);
+/** Pet window widths (logical px): room for a 2-line toast above the pet. */
+export const PET_WINDOW_W: Record<PetSize, number> = { large: MAX_COL_W + 2 * EDGE, small: 152 };
+
+/**
+ * The size of one bot's own window: its toast or working label on top (never clipped), the
+ * sprite (with its thought cloud, hops and badges inside the canvas) and the name label.
+ * Rust opens every pet window at this size (pets_set_size).
+ */
+export function petWindowSize(pref: PetSize): { width: number; height: number } {
+  const sprite = FRAME * pickScale(PET_WINDOW_W[pref] - 2 * EDGE, pref);
+  // The working label (overlap 0) is the tallest stack: toast, sprite, name label, padding.
+  return { width: PET_WINDOW_W[pref], height: EDGE + TOAST_MAX_H + LABEL_OVERLAP_PX + sprite + LABEL_H - LABEL_OVERLAP + BOTTOM_PAD };
 }
 
 export function overlaps(a: Box, b: Box): boolean {
