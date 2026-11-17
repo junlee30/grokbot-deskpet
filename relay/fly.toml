@@ -1,14 +1,11 @@
-# NOT DEPLOYED. Deploying requires Jun's explicit approval.
+# EXAMPLE ONLY: the v1 relay is deprecated (see README.md). Nothing in this repo deploys it, and
+# the project's own hosted relay has been shut down.
 #
-# A future, standalone Fly app for the Desk Pet relay, separate from jarvis-scheduler: its own
-# app, its own volume, its own secrets. Never copy or share secrets with any other app.
-# Nothing in this repo runs `fly`. The exact, reviewed command list is in .runs/m1-deploy-plan.md.
-#
-# Single machine only, because state lives in SQLite on one volume:
-#   fly deploy --app grokbot-deskpet-relay --ha=false        (run from relay/)
-# Secrets (set by Jun, value generated inline, never displayed):
-#   DESKPET_PEPPER (>= 32 chars; the relay refuses to start in production without it)
-app = "grokbot-deskpet-relay"
+# For self-hosters who want to run their own relay on Fly.io: replace `your-deskpet-relay` with
+# your own app name (here and in DESKPET_PUBLIC_URL), create the volume, and set one secret:
+#   DESKPET_PEPPER (>= 32 random chars; the relay refuses to start in production without it)
+# Single machine only, because state lives in SQLite on one volume (deploy with --ha=false).
+app = "your-deskpet-relay"
 primary_region = "sjc"
 
 [build]
@@ -19,7 +16,7 @@ primary_region = "sjc"
   HOST = "0.0.0.0"
   PORT = "8787"
   DESKPET_DB = "/data/deskpet.sqlite"
-  DESKPET_PUBLIC_URL = "https://grokbot-deskpet-relay.fly.dev"
+  DESKPET_PUBLIC_URL = "https://your-deskpet-relay.fly.dev"
   # Fly's proxy sets Fly-Client-IP; trust it for per-IP pairing limits.
   DESKPET_TRUST_PROXY = "1"
   # CORS stays OFF in production (DESKPET_CORS_ORIGINS unset): the desktop app talks to the

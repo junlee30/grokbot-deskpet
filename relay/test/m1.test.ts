@@ -311,11 +311,11 @@ describe("pairing limits", () => {
   });
 
   it("returns DESKPET_PUBLIC_URL as relay_url", async () => {
-    const h = await startRelay({ publicUrl: "https://grokbot-deskpet-relay.fly.dev" });
+    const h = await startRelay({ publicUrl: "https://your-deskpet-relay.example" });
     try {
       const p = await pairStart(h.base);
       const r = await pair(h.base, { code: p.code });
-      assert.equal(((await r.json()) as { relay_url: string }).relay_url, "https://grokbot-deskpet-relay.fly.dev");
+      assert.equal(((await r.json()) as { relay_url: string }).relay_url, "https://your-deskpet-relay.example");
     } finally {
       await h.close();
     }

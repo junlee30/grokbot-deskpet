@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Dev helpers.
-#   scripts/dev.sh            # start the relay on 127.0.0.1:8787 (foreground, Ctrl-C to stop)
-#                             #   SQLite in relay/data/, dev pepper in relay/data/dev-pepper (0600)
-#                             #   CORS allowed only for the vite web prototype on :1420
-#   scripts/dev.sh relay      # same
-#   scripts/dev.sh web        # desktop frontend as a plain web prototype (vite, http://localhost:1420)
 #   scripts/dev.sh tauri      # desktop app with cargo tauri dev (starts vite itself)
+#   scripts/dev.sh web        # desktop frontend as a plain web prototype (vite, http://localhost:1420;
+#                             #   no v2 there: the private mailbox needs the desktop app)
+#   scripts/dev.sh relay      # DEPRECATED v1: your own relay on 127.0.0.1:8787 (foreground, Ctrl-C)
+#                             #   SQLite + dev pepper in relay/data/; CORS only for the web prototype
 #   scripts/dev.sh test       # relay tests
+#   scripts/dev.sh            # = relay (kept for old habits; v2 needs no relay at all)
 set -euo pipefail
 set +x
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
