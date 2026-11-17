@@ -346,9 +346,19 @@ function readStdin() {
   }
 }
 
+/** A deprecated v1 relay code (`K7Q-42M`, case and the dash optional) and no dp2 code. */
+const V1_CODE = /(^|[^A-Za-z0-9_.-])[A-HJ-NP-Za-hj-np-z2-9]{3}-?[A-HJ-NP-Za-hj-np-z2-9]{3}([^A-Za-z0-9_-]|$)/;
+const V1_DEPRECATED =
+  "that is an old v1 relay code; v1 is deprecated and its relay is gone. " +
+  "Make a new code in Desk Pet (gear icon, then Pair; it starts with dp2.) and pair with that";
+
 function cmdPair() {
   const input = readStdin();
   const m = /dp2\.[A-Za-z0-9_-]+/.exec(input);
+  if (!m && V1_CODE.test(input.trim())) {
+    process.stderr.write(`deskpet-publish: ${V1_DEPRECATED}\n`);
+    return 1;
+  }
   let p;
   try {
     p = decodePairing(m ? m[0] : input);

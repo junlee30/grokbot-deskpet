@@ -1,6 +1,6 @@
 ---
 name: desk-pet
-description: Show this Grok Bot as a pixel-art pet on the user's desktop, drawn as its own Grok Bot profile picture (avatarShape/avatarColor). Use when the user says "Install the Desk Pet skill and pair with code dp2.…" (v2, private mailbox, preferred) or "... with code XXX-XXX" (v1 relay), to pair once, and during every turn to post short lifecycle status (thinking, working, juggling, needs_you, done, error). Never sends prompts, replies, tool arguments, file contents or secrets.
+description: Show this Grok Bot as a pixel-art pet on the user's desktop, drawn as its own Grok Bot profile picture (avatarShape/avatarColor). Use when the user says "Install the Desk Pet skill and pair with code dp2.…" to pair once (private, end-to-end encrypted mailbox), and during every turn to post short lifecycle status (thinking, working, juggling, needs_you, done, error). Old v1 codes like "K7Q-42M" are deprecated: tell the user to make a new code in Desk Pet (⚙ → Pair). Never sends prompts, replies, tool arguments, file contents or secrets.
 ---
 
 # Desk Pet
@@ -9,23 +9,24 @@ The user runs a small desktop app ("Desk Pet for Grok Bot", unofficial, working 
 shows one pixel-art pet per Grok Bot and animates it from status updates. Each pet looks like
 that bot's own Grok Bot profile picture (its avatar shape in its avatar colour) when the bot
 sends its `avatar`; otherwise it is a generic robot. You can't reach the user's machine, and
-it can't reach you, so status goes through a **mailbox** both sides can reach over HTTPS:
+it can't reach you, so status goes through a **private mailbox** both sides can reach over
+HTTPS. Pairing codes look like `dp2.` followed by about 71 letters, digits, `-` and `_`. You
+encrypt each status with a key from the code and post it to a random topic on
+[ntfy.sh](https://ntfy.sh) (or the user's own ntfy server); the desktop app subscribes and
+decrypts. There is no Desk Pet server; the mailbox only sees ciphertext.
 
-- **v2 (preferred): private mailbox.** Codes look like `dp2.` followed by about 71 letters,
-  digits, `-` and `_`. You encrypt each status with a key from the code and post it to a random
-  topic on [ntfy.sh](https://ntfy.sh) (or the user's own ntfy server); the desktop app
-  subscribes and decrypts. No Desk Pet server; the mailbox only sees ciphertext.
-- **v1: relay.** Codes look like `K7Q-42M`. You exchange the code for a token at the Desk Pet
-  relay and post plain JSON to it. Still supported; see section 7.
+Codes like `K7Q-42M` (`XXX-XXX`) are from the old **v1 relay, which is deprecated**. Don't pair
+with them: see section 7.
 
 Status is best-effort decoration. **It must never slow down, block or break your real work.**
 Every post gives up after about 3 seconds and ignores failures.
 
-## 1. Pairing (once): v2 `dp2.` codes
+## 1. Pairing (once): `dp2.` codes
 
 Trigger: the user says something like
 `Install the Desk Pet skill and pair with code dp2.AgAB…` (one long word starting `dp2.`).
-If the code looks like `XXX-XXX` instead, follow section 7 (v1).
+If the code looks like `XXX-XXX` instead (e.g. `K7Q-42M`), it is a deprecated v1 code: don't
+install or pair anything, follow section 7.
 
 **The dp2 code is a secret** (it contains the encryption key). Never echo it back, never put it
 in a file other than the one below, in memory notes, in chat, or on a process command line.
@@ -76,9 +77,8 @@ DESK_PET_AVATAR="$(jq -c '{shape: .avatarShape, color: .avatarColor}
   | {shape: (.shape|ascii_downcase), color: (.color|ascii_downcase)}' "$PROFILE" 2>/dev/null || true)"
 ```
 
-- v2: `deskpet-publish` reads `DESK_PET_AVATAR` (this JSON) from the environment, or take
-  `--avatar <shape>/<color>` (e.g. `--avatar blob/black`). Values not on the lists are dropped.
-- v1: the JSON goes in the body as `"avatar": {"shape": ..., "color": ...}` (section 4).
+`deskpet-publish` reads `DESK_PET_AVATAR` (this JSON) from the environment, or takes
+`--avatar <shape>/<color>` (e.g. `--avatar blob/black`). Values not on the lists are dropped.
 
 Allowed values (anything else is rejected):
 
@@ -104,18 +104,17 @@ the turn, max 128 characters, no personal data). Something like `chat-<short ran
 | you are blocked waiting on the user (question, approval, login) | `needs_you` | `waiting` |
 | the turn finished                                   | `done`      | `turn_end`     |
 | a visible failure the user should know about        | `error`     | `error`        |
-| long turn: re-post the current state (v2: every ~5 min, v1: every ~60 s) | (current) | `heartbeat` |
+| long turn: re-post the current state every ~5 min   | (current)   | `heartbeat`    |
 
 Notes:
 
 - Don't post for every tiny step. One post per state change, plus heartbeats during long turns,
   is plenty.
-- **v2 budget:** the free ntfy.sh mailbox allows about **250 messages per day per IP address**,
+- **Budget:** the free ntfy.sh mailbox allows about **250 messages per day per IP address**,
   shared by every bot on this computer. `deskpet-publish` helps: it drops a `heartbeat` that
   comes less than 4 minutes after the last post of the same state in that session, drops an
   exact repeat within 10 seconds, and after a `429` (limit reached) stays quiet for 15 minutes.
   Still, prefer fewer posts: state changes plus a heartbeat every ~5 minutes.
-- v1: the relay rate-limits to 60/min (burst 20) per pairing.
 - A `working`/`thinking`/`juggling` state with no update for 10 minutes is shown as idle, so
   send heartbeats during long work.
 - After `done`, the pet celebrates once and settles to idle. It falls asleep by itself later,
@@ -123,33 +122,12 @@ Notes:
 
 ## 4. The exact call
 
-One function for both kinds of pairing. v2 wins when this computer has a v2 pairing:
-
 ```bash
 desk_pet() {  # usage: desk_pet <state> <event> [message]
-  # v2: private mailbox (end-to-end encrypted; fails open, ~3 s max, prints nothing).
-  if [ -x "$HOME/.deskpet/deskpet-publish" ] && [ -f "$HOME/.deskpet/pairing" ]; then
-    DESK_PET_SESSION="${DESK_PET_SESSION:-default}" DESK_PET_AVATAR="${DESK_PET_AVATAR:-}" \
-      "$HOME/.deskpet/deskpet-publish" jarvis Jarvis "$@" >/dev/null 2>&1 || true
-    return 0
-  fi
-  # v1: relay.
-  [ -n "${DESK_PET_TOKEN:-}" ] && [ -n "${DESK_PET_RELAY_URL:-}" ] || return 0
-  local body code
-  body="$(jq -nc --arg s "$DESK_PET_SESSION" --arg st "$1" --arg ev "$2" --arg msg "${3:-}" \
-    --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson av "${DESK_PET_AVATAR:-null}" \
-    '{agent_id: "jarvis", agent_name: "Jarvis", session: $s, state: $st, event: $ev, ts: $ts}
-     + (if $msg != "" then {message: $msg} else {} end)
-     + (if $av != null then {avatar: $av} else {} end)')" || return 0
-  code="$(curl -sS -m 3 -o /dev/null -w '%{http_code}' -X POST "$DESK_PET_RELAY_URL/v1/events" \
-    -H "Authorization: Bearer $DESK_PET_TOKEN" \
-    -H 'Content-Type: application/json' \
-    --data-binary "$body" 2>/dev/null)" || return 0
-  # Relays older than 0.3.0 reject the avatar field: drop it for this session and resend once.
-  if [ "$code" = "400" ] && [ -n "${DESK_PET_AVATAR:-}" ]; then
-    DESK_PET_AVATAR=""
-    desk_pet "$@"
-  fi
+  # Private mailbox (end-to-end encrypted; fails open, ~3 s max, prints nothing).
+  [ -x "$HOME/.deskpet/deskpet-publish" ] && [ -f "$HOME/.deskpet/pairing" ] || return 0
+  DESK_PET_SESSION="${DESK_PET_SESSION:-default}" DESK_PET_AVATAR="${DESK_PET_AVATAR:-}" \
+    "$HOME/.deskpet/deskpet-publish" jarvis Jarvis "$@" >/dev/null 2>&1 || true
   return 0
 }
 
@@ -163,27 +141,22 @@ Replace `jarvis` / `Jarvis` with your own `agent_id` and `agent_name`.
 
 Rules for this call:
 
-- **Always fail open.** If the mailbox or relay is slow or down, carry on as if nothing
+- **Always fail open.** If the mailbox is slow or down, carry on as if nothing
   happened. Never retry in a loop and never tell the user about Desk Pet failures unless they
   ask. (`DESK_PET_DEBUG=1` makes `deskpet-publish` print a one-line outcome, e.g. `sent 200` or
   `skipped: heartbeat throttled`, to stderr; it never prints secrets.)
-- **Secrets stay put.** v2: the code lives only in `~/.deskpet/pairing`; `deskpet-publish`
-  never prints it and passes nothing secret on a command line. v1: the token comes from the
-  environment variable only; never inline, print or log it, or put it in a URL.
+- **Secrets stay put.** The code lives only in `~/.deskpet/pairing`; `deskpet-publish` never
+  prints it and passes nothing secret on a command line.
 - **Never run with `set -x`** (or any shell tracing or verbose curl, `-v`).
-- What gets sent (v2: inside the encryption; v1: the JSON body): `agent_id`, `agent_name`,
-  `session`, `state`, `event`, `message` (optional), `ts` (ISO-8601), `avatar` (optional), and
-  for v2 also `seq` (added by `deskpet-publish`; it rises with every post so the pet can drop
-  replays). v1 rejects unknown fields; build its JSON with a JSON tool (as above).
-- v1: a `400` while sending an avatar means the relay is older than 0.3.0 or the avatar isn't
-  on the allowlist: stop sending `avatar` for the session (the function above does this).
+- What gets sent, inside the encryption: `agent_id`, `agent_name`, `session`, `state`,
+  `event`, `message` (optional), `ts` (ISO-8601), `avatar` (optional) and `seq` (added by
+  `deskpet-publish`; it rises with every post so the pet can drop replays).
 
 ## 5. The `message` field: privacy rules
 
 `message` is an optional, at most **160 characters**, one-line hint shown as a small bubble
 on the user's desktop for a few seconds (`deskpet-publish` collapses it to one line and cuts it
-at 160). Nothing stores it except, on v2, the mailbox's short-lived cache of the *encrypted*
-message.
+at 160). Nothing stores it except the mailbox's short-lived cache of the *encrypted* message.
 
 Only put a short, generic status there, e.g. `Running tests`, `Waiting for your approval`,
 `Build failed, see chat`, `Done: 3 files changed`.
@@ -199,8 +172,6 @@ When in doubt, omit `message`.
 
 ## 6. Unpairing, re-pairing and privacy
 
-**v2 (private mailbox)**
-
 - The user can unpair or make a new code in the desktop app. The old code then stops working
   silently: your posts still succeed but nobody reads them. There is no error to watch for, so
   when the user gives you a new `dp2.` code, pair again (step 3 of section 1); it replaces the
@@ -212,64 +183,18 @@ When in doubt, omit `message`.
   or forge a status. The desktop app keeps the code in the macOS Keychain and drops anything
   that fails to decrypt, is a replay or is more than 10 minutes old.
 
-**v1 (relay)**
-
-- The user can unpair from the desktop app (Settings, then Unpair). That revokes the token
-  immediately and later posts get `401`. When you get `401`, stop posting, delete
-  `DESK_PET_TOKEN` / `DESK_PET_RELAY_URL`, and wait for a new pairing code from the user.
-- To unpair from your side (only if the user asks):
-  `curl -sS -m 3 -X POST "$DESK_PET_RELAY_URL/v1/unpair" -H "Authorization: Bearer $DESK_PET_TOKEN" >/dev/null 2>&1 || true`,
-  then delete both secrets.
-- If the user switches the desktop app to a different relay (for example from local to
-  hosted), the old token stops working there; they will give you a new code. Pair again and
-  replace both secrets.
-- The relay keeps only a keyed hash of the token, the last state per bot/session (no
-  message bodies) and the latest avatar names per bot, in a small database that survives relay
-  restarts. Silent bots are forgotten after 24 hours. The desktop app keeps its copy of the
-  token in the macOS Keychain.
-
 Desk Pet is an unofficial side project, not an xAI product.
 
-## 7. v1 relay pairing (`XXX-XXX` codes)
+## 7. Old v1 codes (`XXX-XXX`): deprecated
 
-Use this only for codes like `K7Q-42M` (v2 `dp2.` codes: section 1). Trigger: the user says
-something like `Install the Desk Pet skill and pair with code K7Q-42M`, optionally followed by
-`using relay <url>` (the desktop app adds this when it is not on the hosted relay).
+The v1 relay is deprecated and the hosted relay has been shut down. If the user gives you a code
+like `K7Q-42M` (three letters/digits, a dash, three more; case and a missing dash don't
+matter), **don't** try to pair, don't call any relay, and don't install anything. Tell them,
+for example:
 
-1. Take the code (format `XXX-XXX`, letters and digits; case and a missing dash are fine).
-2. Pick a stable `agent_id` for yourself: lowercase `[a-z0-9_-]`, max 64 characters, e.g.
-   `jarvis`. Use your display name as `agent_name` (max 64), e.g. `Jarvis`.
-3. Pick the relay URL, first match wins:
-   1. the `using relay <url>` part of the user's message, if present;
-   2. the `DESK_PET_RELAY_URL` environment variable, if set;
-   3. the hosted relay `https://grokbot-deskpet-relay.fly.dev`.
+> That's an old v1 Desk Pet code. v1 is deprecated and its relay is gone. In Desk Pet, click
+> ⚙ → **Pair** to make a new code (it starts with `dp2.`), and send me that line.
 
-   If pairing fails with a connection error, say so plainly and carry on with your work.
-   For local development the relay is `http://127.0.0.1:8787`.
-
-   Only use `https://` URLs, or `http://` for `localhost`/`127.0.0.1`. Exchange the code:
-
-   ```bash
-   RELAY="${DESK_PET_RELAY_URL:-https://grokbot-deskpet-relay.fly.dev}"   # or the URL the user gave
-   RESP="$(curl -sS -m 5 -X POST "$RELAY/v1/pair" \
-     -H 'Content-Type: application/json' \
-     -d '{"code":"K7Q-42M","agent_id":"jarvis","agent_name":"Jarvis"}')"
-   ```
-
-   Success is HTTP 200 with `{"token": "...", "relay_url": "...", "agent_id": "..."}`.
-   Errors: `400` malformed code, `404` unknown code, `410` code already used or expired
-   (codes are single use and expire after 15 minutes), `429` slow down (too many attempts,
-   including a short global lock after many failed codes; wait a minute, don't loop).
-4. Save the result as **secrets**, without printing them:
-   - `DESK_PET_TOKEN` = `token`
-   - `DESK_PET_RELAY_URL` = `relay_url` from the response. It is the relay's canonical public
-     URL (for the hosted relay, `https://grokbot-deskpet-relay.fly.dev`). Use it for every
-     later call instead of the URL you paired with.
-
-   Use your platform's secret / environment-variable store. Do not write the token into
-   files in the user's repository, into memory notes, or into chat. Parse the JSON without
-   echoing it (for example `jq -r .token <<<"$RESP"` captured straight into the secret store),
-   and `unset RESP` afterwards.
-5. Confirm to the user **without echoing the token**, e.g.
-   "Paired with Desk Pet. I'll show up on your desktop as Jarvis." If pairing failed, say
-   so plainly (for example "that code expired, please click Connect again for a new one").
+If this computer still has v1 secrets from an earlier pairing (`DESK_PET_TOKEN`,
+`DESK_PET_RELAY_URL`), delete them from your secret store and stop using them. (`deskpet-publish
+pair` also refuses v1 codes with the same advice.)

@@ -182,6 +182,19 @@ describe("CLI against a fake ntfy", () => {
     assert.ok(!fs.existsSync(path.join(home, "pairing")));
   });
 
+  test("pair: a v1 relay code gets the deprecation advice, nothing is stored", async () => {
+    for (const input of ["K7Q-42M", "k7q42m\n", "Install the Desk Pet skill and pair with code K7Q-42M"]) {
+      const r = await run(["pair"], { env: env(), input });
+      assert.equal(r.code, 1, input);
+      assert.match(r.stderr, /v1 is deprecated/, input);
+      assert.match(r.stderr, /Pair/, input);
+      assert.ok(!fs.existsSync(path.join(home, "pairing")));
+    }
+    // A cut-off dp2 code is still a checksum/format error, not "v1".
+    const r = await run(["pair"], { env: env(), input: code.slice(0, 30) });
+    assert.doesNotMatch(r.stderr, /v1/);
+  });
+
   test("pair from stdin (inside a sentence), 0600 file, no secrets printed", async () => {
     const r = await run(["pair"], { env: env(), input: `Install the Desk Pet skill and pair with code ${code}\n` });
     assert.equal(r.code, 0, r.stderr);
