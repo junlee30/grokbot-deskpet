@@ -1,33 +1,14 @@
-// Pet model + view: one pet per agent_id, aggregating that agent's sessions.
+// Pet model + view: one pet per agent_id. Which of its sessions count: sessions.ts.
 import type { DeskPetConfig } from "./config.ts";
 import { LABEL_OVERLAP_PX, layoutToast, toastMaxWidth, type Slot } from "./layout.ts";
 import { bubbleView, carryMessage, sameView, stickyLabel, type BubbleView } from "./presence.ts";
 import type { PetState, StateEvent } from "./events.ts";
+import { displayFor, eventOrder, type Session } from "./sessions.ts";
 import { accentFor, type AnimState, type SpriteBank } from "./sprites.ts";
 import { accentHex, AVATAR_DONE_MS, avatarCue, avatarGeometry, colorHex, FacePlayer, parseAvatar, type Avatar } from "./avatar.ts";
 import { drawAvatar, type AvatarBank } from "./avatar-bank.ts";
 
-/** Highest priority first. */
-export const PRIORITY: PetState[] = ["needs_you", "error", "juggling", "working", "thinking", "done", "idle", "sleeping"];
-const ACTIVE = new Set<PetState>(["thinking", "working", "juggling"]);
 const MAX_SESSIONS = 16;
-
-interface Session {
-  state: PetState;
-  at: number;
-  /** Latest message for this session while it stays in the same state (working label). */
-  message?: string;
-}
-
-export function effectiveState(sessions: Iterable<Session>, now: number, staleActiveMs: number): PetState {
-  let bestRank = Infinity;
-  for (const s of sessions) {
-    // An active session that has gone quiet (no heartbeat) is treated as idle.
-    const st: PetState = ACTIVE.has(s.state) && now - s.at > staleActiveMs ? "idle" : s.state;
-    bestRank = Math.min(bestRank, PRIORITY.indexOf(st));
-  }
-  return bestRank === Infinity ? "idle" : PRIORITY[bestRank];
-}
 
 export class Pet {
   readonly id: string;
@@ -41,6 +22,9 @@ export class Pet {
   private mode: "robot" | "avatar" = "robot";
   readonly sessions = new Map<string, Session>();
   lastActivity = 0;
+  /** Sessions behind the state drawn last frame (the sticky label comes from these). */
+  private shownSessions: Session[] = [];
+  private arrivals = 0;
   private doneSeq = 0;
   private playedDoneSeq = 0;
   private anim: { state: AnimState; start: number } = { state: "idle", start: 0 };
@@ -152,7 +136,7 @@ export class Pet {
     this.sessions.delete(e.session);
     if (this.sessions.size >= MAX_SESSIONS) this.sessions.delete(this.sessions.keys().next().value!);
     const message = carryMessage(prev, e.state, typeof e.message === "string" ? e.message : undefined);
-    this.sessions.set(e.session, { state: e.state, at, message });
+    this.sessions.set(e.session, { state: e.state, at, ...eventOrder(e.ts, e.seq, at), n: ++this.arrivals, message });
     this.lastActivity = Math.max(this.lastActivity, at);
     // "done" plays once per fresh done event; catch-up replays don't re-trigger it.
     if (e.state === "done" && fresh) this.doneSeq++;
@@ -171,7 +155,7 @@ export class Pet {
    */
   private syncBubble(now: number, shown: AnimState, staleMs: number): void {
     const next: BubbleView = this.slot
-      ? bubbleView(this.toastMsg, stickyLabel(shown, this.sessions.values(), now, staleMs), now)
+      ? bubbleView(this.toastMsg, stickyLabel(shown, this.shownSessions, now, staleMs), now)
       : { mode: "hidden" };
     if (this.toastMsg && now >= this.toastMsg.until) this.toastMsg = null;
     if (sameView(next, this.view)) return;
@@ -189,8 +173,13 @@ export class Pet {
   }
 
   renderState(now: number, cfg: DeskPetConfig, offline: boolean): AnimState {
-    if (offline) return "offline";
-    let s: PetState = effectiveState(this.sessions.values(), now, cfg.staleActiveMs);
+    if (offline) {
+      this.shownSessions = [];
+      return "offline";
+    }
+    const d = displayFor(this.sessions.values(), now, cfg.staleActiveMs);
+    this.shownSessions = d.sessions;
+    let s: PetState = d.state;
     if (s === "done") {
       if (this.playedDoneSeq < this.doneSeq) return "done";
       s = "idle";

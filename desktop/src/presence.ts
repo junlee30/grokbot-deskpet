@@ -34,13 +34,16 @@ export function truncateLabel(text: string, max = LABEL_MAX): string {
 
 /**
  * The persistent label for a pet whose displayed state is `shown`: the newest non-stale session
- * in that state that has a message. Null when the state has no label or nobody said anything.
+ * in that state that has a message (for "juggling", any working or juggling session: several
+ * working sessions at once are shown as juggling). Null when the state has no label or nobody
+ * said anything.
  */
 export function stickyLabel(shown: string, sessions: Iterable<SessionInfo>, now: number, staleMs: number): string | null {
   if (!STICKY_STATES.has(shown)) return null;
   let best: SessionInfo | null = null;
   for (const s of sessions) {
-    if (s.state !== shown || !s.message || !s.message.trim() || now - s.at > staleMs) continue;
+    const match = shown === "juggling" ? STICKY_STATES.has(s.state) : s.state === shown;
+    if (!match || !s.message || !s.message.trim() || now - s.at > staleMs) continue;
     if (!best || s.at >= best.at) best = s;
   }
   return best ? best.message!.replace(/\s+/g, " ").trim() : null;

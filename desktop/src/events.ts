@@ -12,6 +12,8 @@ export interface StateEvent {
   event: string;
   message?: string;
   ts: string;
+  /** The bot's sequence number (rises with every post); orders events that share a ts. */
+  seq?: number;
   received_at: string;
   /** Grok Bot profile avatar names; validated again by parseAvatar. */
   avatar?: { shape: string; color: string };

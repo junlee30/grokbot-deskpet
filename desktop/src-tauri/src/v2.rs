@@ -294,7 +294,8 @@ pub fn parse_event(plaintext: &[u8]) -> Result<BotEvent, &'static str> {
 }
 
 impl BotEvent {
-    /// The same JSON shape the v1 relay sends as a `state` event, so the UI handles both alike.
+    /// The `state` event JSON the UI draws from (the v1 relay's shape plus `seq`, which the UI
+    /// uses to order an agent's events across sessions).
     pub fn to_ui_json(&self, received_at_ms: i64) -> Value {
         let mut m = json!({
             "agent_id": self.agent_id,
@@ -303,6 +304,7 @@ impl BotEvent {
             "state": self.state,
             "event": self.event,
             "ts": self.ts,
+            "seq": self.seq,
             "received_at": iso_from_ms(received_at_ms),
             "via": "v2",
         });
@@ -582,7 +584,7 @@ mod tests {
         let ui = e.to_ui_json(0);
         assert_eq!(ui["received_at"], "1970-01-01T00:00:00.000Z");
         assert_eq!(ui["avatar"]["shape"], "blob");
-        assert!(ui.get("seq").is_none());
+        assert_eq!(ui["seq"], 7, "the UI orders an agent's events across sessions by ts, then seq");
 
         let base = || -> Map<String, Value> {
             serde_json::from_slice::<Value>(&event_json(1, "2026-11-16T12:00:00Z")).unwrap().as_object().unwrap().clone()
