@@ -5,7 +5,7 @@
 //   - sticky label: while the pet is shown "working" (or "juggling"), the latest message of the
 //     sessions in that state stays up as a short label ("Reading the build log").
 // A toast wins while it lasts, unless it says the same as the label (then it is the label).
-import type { PetState } from "./relay.ts";
+import type { PetState } from "./events.ts";
 
 /** States whose message stays up as a persistent label. */
 export const STICKY_STATES: ReadonlySet<string> = new Set<PetState>(["working", "juggling"]);

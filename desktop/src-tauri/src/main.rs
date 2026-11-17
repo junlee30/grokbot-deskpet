@@ -1,124 +1,33 @@
 // Desk Pet for Grok Bot (unofficial, working title).
 //
-// Rust side: the transparent always-on-top window, window-position memory, the opener plugin,
-// the v2 mailbox client (ntfy SSE + XChaCha20-Poly1305, pairing in the Keychain; the default)
-// and the deprecated v1 relay client (HTTP + SSE, token in the macOS Keychain; self-hosted
-// relays only). The webview gets status/state
-// events; it never sees the v1 token, and sees the v2 pairing string only to show/copy it.
+// Rust side: the transparent always-on-top window, window-position memory, the opener plugin
+// and the v2 private-mailbox client (ntfy SSE + XChaCha20-Poly1305, pairing in the macOS
+// Keychain). The webview gets status/state events, and sees the pairing string only to
+// show/copy the paste line.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod mailbox;
-mod relay;
 mod secrets;
+mod stream;
 mod v2;
 mod window_state;
 
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use relay::{PairStartOut, RelayState, StreamHandle};
 use serde::Serialize;
+use stream::StreamHandle;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-/// The v2 mailbox subscription (independent of the v1 relay stream: both can run).
+/// The v2 mailbox subscription.
 #[derive(Default)]
 struct MailboxState(Mutex<Option<StreamHandle>>);
 
 /// Shared HTTP client (connection pool, TLS via the OS).
 struct Http(reqwest::Client);
 
-fn parse(relay_url: &str) -> Result<url::Url, String> {
-    relay::normalize_relay_url(relay_url)
-}
-
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(f).await.map_err(|_| "internal error".to_string())?
-}
-
-/// Validate a relay URL; returns its normalised form (no trailing slash).
-#[tauri::command]
-fn relay_normalize_url(relay_url: String) -> Result<String, String> {
-    Ok(parse(&relay_url)?.as_str().trim_end_matches('/').to_string())
-}
-
-#[tauri::command]
-async fn relay_has_token(relay_url: String) -> Result<bool, String> {
-    let u = parse(&relay_url)?;
-    blocking(move || secrets::get(&u).map(|t| t.is_some())).await
-}
-
-/// One-time migration of an M0 token from webview localStorage into the keychain.
-#[tauri::command]
-async fn relay_import_token(relay_url: String, token: String) -> Result<(), String> {
-    let u = parse(&relay_url)?;
-    blocking(move || secrets::set(&u, &token)).await
-}
-
-/// New pairing: the token goes straight into the keychain; only the code is returned.
-#[tauri::command]
-async fn relay_pair_start(http: State<'_, Http>, relay_url: String) -> Result<PairStartOut, String> {
-    let u = parse(&relay_url)?;
-    relay::pair_start(&http.0, &u).await
-}
-
-/// Stop streaming, revoke the token at the relay (best effort) and forget it.
-#[tauri::command]
-async fn relay_unpair(http: State<'_, Http>, st: State<'_, RelayState>, relay_url: String) -> Result<(), String> {
-    let u = parse(&relay_url)?;
-    if let Some(h) = st.stream.lock().unwrap().take() {
-        h.stop();
-    }
-    let u2 = u.clone();
-    if let Some(token) = blocking(move || secrets::get(&u2)).await? {
-        relay::revoke(&http.0, &u, &token).await;
-    }
-    blocking(move || secrets::delete(&u)).await
-}
-
-/// Forget the local token without calling the relay.
-#[tauri::command]
-async fn relay_forget(st: State<'_, RelayState>, relay_url: String) -> Result<(), String> {
-    let u = parse(&relay_url)?;
-    if let Some(h) = st.stream.lock().unwrap().take() {
-        h.stop();
-    }
-    blocking(move || secrets::delete(&u)).await
-}
-
-/// (Re)start the SSE subscription for this relay. Ok(false) if there is no token.
-#[tauri::command]
-async fn relay_stream_start(
-    app: AppHandle,
-    http: State<'_, Http>,
-    st: State<'_, RelayState>,
-    relay_url: String,
-) -> Result<bool, String> {
-    let u = parse(&relay_url)?;
-    let u2 = u.clone();
-    let Some(token) = blocking(move || secrets::get(&u2)).await? else {
-        return Ok(false);
-    };
-    let mut slot = st.stream.lock().unwrap();
-    if let Some(h) = slot.take() {
-        h.stop();
-    }
-    *slot = Some(relay::start_stream(app, http.0.clone(), u, token));
-    Ok(true)
-}
-
-#[tauri::command]
-fn relay_stream_stop(st: State<'_, RelayState>) {
-    if let Some(h) = st.stream.lock().unwrap().take() {
-        h.stop();
-    }
-}
-
-/// Network came back / window became visible: reconnect now unless the stream is healthy.
-#[tauri::command]
-fn relay_reconnect_now(st: State<'_, RelayState>) {
-    if let Some(h) = st.stream.lock().unwrap().as_ref() {
-        h.kick();
-    }
 }
 
 // ---------------------------------------------------------------- v2 (mailbox) commands
@@ -233,13 +142,28 @@ fn log_line(app: &AppHandle, msg: &str) {
     }
 }
 
-/// v1 is deprecated and the hosted relay is gone: forget a token stored for it, so the app
-/// stops trying to connect. Silent apart from one log line; the v2 pairing is not touched.
-fn purge_retired_relay(app: &AppHandle) {
+/// Marker in the app data dir: the v1 clean-up has run successfully and never needs to again.
+const V1_CLEANUP_MARKER: &str = "v1-cleanup.done";
+
+/// One-time clean-up: v1 (the relay) is gone from the app, so delete any v1 relay tokens an
+/// older version left in the Keychain. Runs in the background until it succeeds once, then
+/// never again. Logs one line with a count only; the v2 pairing is never touched.
+fn cleanup_v1_once(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
-        if secrets::purge_retired_relay_tokens() > 0 {
-            log_line(&app, "removed the v1 token for the retired hosted relay (v1 is deprecated; v2 unaffected)");
+        let Ok(dir) = app.path().app_data_dir() else { return };
+        let marker = dir.join(V1_CLEANUP_MARKER);
+        if marker.exists() {
+            return;
+        }
+        match secrets::purge_v1_relay_tokens() {
+            Ok(n) => {
+                if n > 0 {
+                    log_line(&app, &format!("removed {n} leftover v1 relay token(s) from the Keychain (v1 is gone; v2 unaffected)"));
+                }
+                let _ = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&marker, b"1\n"));
+            }
+            Err(e) => log_line(&app, &format!("v1 Keychain clean-up will retry next launch: {e}")),
         }
     });
 }
@@ -247,19 +171,9 @@ fn purge_retired_relay(app: &AppHandle) {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(Http(relay::http_client()))
-        .manage(RelayState::default())
+        .manage(Http(stream::http_client()))
         .manage(MailboxState::default())
         .invoke_handler(tauri::generate_handler![
-            relay_normalize_url,
-            relay_has_token,
-            relay_import_token,
-            relay_pair_start,
-            relay_unpair,
-            relay_forget,
-            relay_stream_start,
-            relay_stream_stop,
-            relay_reconnect_now,
             v2_normalize_url,
             v2_status,
             v2_pair_new,
@@ -273,7 +187,7 @@ fn main() {
             // A desk pet should not take a Dock slot or the app switcher on macOS.
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-            purge_retired_relay(app.handle());
+            cleanup_v1_once(app.handle());
             if let Some(w) = app.get_webview_window("main") {
                 window_state::restore(&w);
                 window_state::track(&w);

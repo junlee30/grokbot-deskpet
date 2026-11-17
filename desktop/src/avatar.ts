@@ -9,7 +9,7 @@
 //
 // When the art is absent the pet falls back to the original robot, accented in the avatar colour.
 
-import type { PetState } from "./relay.ts";
+import type { PetState } from "./events.ts";
 
 export const AVATAR_SHAPES = [
   "arch", "bean", "blob", "capsule", "cloud", "clover", "crystal", "cylinder", "dome", "egg", "flower", "gem", "heart",
@@ -24,7 +24,7 @@ export interface Avatar {
   color: AvatarColor;
 }
 
-/** The avatar from a relay event, or null if missing/invalid (the relay validates too). */
+/** The avatar from a state event, or null if missing/invalid (the Rust side validates too). */
 export function parseAvatar(v: unknown): Avatar | null {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
   const { shape, color } = v as Record<string, unknown>;

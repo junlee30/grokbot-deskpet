@@ -1,4 +1,4 @@
-// Unit tests for the pure layout and network helpers: `npm test` (node:test, Node 24 strips types).
+// Unit tests for the pure layout helpers: `npm test` (node:test, Node 24 strips types).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
@@ -14,7 +14,6 @@ import {
   type Box,
   type PetSize,
 } from "../src/layout.ts";
-import { backoffDelay, isRetiredRelay, LOCAL_RELAY, validateRelayUrl } from "../src/net.ts";
 
 const W = 360;
 const H = 200;
@@ -107,53 +106,5 @@ describe("toast layout", () => {
         });
       }
     }
-  });
-});
-
-describe("relay URL validation (deprecated v1, self-hosted only)", () => {
-  it("accepts https and loopback http", () => {
-    assert.deepEqual(validateRelayUrl(LOCAL_RELAY), { ok: true, url: LOCAL_RELAY });
-    assert.deepEqual(validateRelayUrl(" https://relay.example.com/ "), { ok: true, url: "https://relay.example.com" });
-    assert.equal(validateRelayUrl("http://localhost:8787").ok, true);
-  });
-  it("refuses the retired hosted relay", () => {
-    for (const u of ["https://grokbot-deskpet-relay.fly.dev", "https://GROKBOT-DESKPET-RELAY.fly.dev/"]) {
-      const r = validateRelayUrl(u);
-      assert.equal(r.ok, false, u);
-      assert.match((r as { error: string }).error, /shut down/);
-      assert.ok(isRetiredRelay(u));
-    }
-    assert.ok(!isRetiredRelay("https://relay.example.com"));
-    assert.ok(!isRetiredRelay("https://deskpet-relay.fly.dev"), "other fly apps are fine");
-    assert.ok(!isRetiredRelay("not a url"));
-  });
-  it("rejects everything else", () => {
-    for (const bad of [
-      "http://example.com",
-      "http://192.168.1.10:8787",
-      "https://user:pw@example.com",
-      "https://example.com/v1",
-      "https://example.com/?a=1",
-      "https://example.com/#x",
-      "ftp://example.com",
-      "javascript:alert(1)",
-      "example.com",
-      "",
-    ]) {
-      assert.equal(validateRelayUrl(bad).ok, false, bad);
-    }
-  });
-});
-
-describe("reconnect backoff", () => {
-  it("grows exponentially with jitter and caps at 30s", () => {
-    assert.equal(backoffDelay(0, 0), 500);
-    assert.equal(backoffDelay(0, 1), 1000);
-    assert.equal(backoffDelay(2, 0.5), 3000);
-    for (let a = 0; a < 50; a++) {
-      const d = backoffDelay(a);
-      assert.ok(d >= 250 && d <= 30_000, `attempt ${a}: ${d}`);
-    }
-    assert.equal(backoffDelay(99, 1), 30_000);
   });
 });

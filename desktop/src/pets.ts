@@ -2,7 +2,7 @@
 import type { DeskPetConfig } from "./config.ts";
 import { LABEL_OVERLAP_PX, layoutToast, toastMaxWidth, type Slot } from "./layout.ts";
 import { bubbleView, carryMessage, sameView, stickyLabel, type BubbleView } from "./presence.ts";
-import type { PetState, StateEvent } from "./relay.ts";
+import type { PetState, StateEvent } from "./events.ts";
 import { accentFor, type AnimState, type SpriteBank } from "./sprites.ts";
 import { accentHex, AVATAR_DONE_MS, avatarCue, avatarGeometry, colorHex, FacePlayer, parseAvatar, type Avatar } from "./avatar.ts";
 import { drawAvatar, type AvatarBank } from "./avatar-bank.ts";
@@ -33,7 +33,7 @@ export class Pet {
   readonly id: string;
   name: string;
   accent: string;
-  /** Latest Grok Bot profile avatar the relay told us about (null: robot art). */
+  /** Latest Grok Bot profile avatar a bot sent us (null: robot art). */
   avatar: Avatar | null = null;
   private readonly face = new FacePlayer();
   private readonly art: AvatarBank | null;
@@ -140,7 +140,7 @@ export class Pet {
   }
 
   update(e: StateEvent, now: number, toastMs = 5000): void {
-    // An event without an avatar keeps the one we have (the relay re-sends the latest anyway).
+    // An event without an avatar keeps the one we have (bots re-send the latest anyway).
     this.setAvatar(parseAvatar(e.avatar));
     if (e.agent_name && e.agent_name !== this.name) {
       this.name = e.agent_name;

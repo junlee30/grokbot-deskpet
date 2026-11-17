@@ -71,7 +71,7 @@ describe("avatar names and colours", () => {
       assert.equal(parseAvatar(bad), null);
   });
 
-  it("matches the relay allowlists (26 shapes, 11 colours)", () => {
+  it("matches the event allowlists (26 shapes, 11 colours)", () => {
     assert.equal(AVATAR_SHAPES.length, 26);
     assert.equal(AVATAR_COLORS.length, 11);
     assert.deepEqual(Object.keys(FALLBACK_COLORS).sort(), [...AVATAR_COLORS].sort());

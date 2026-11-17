@@ -1,47 +1,32 @@
-// v2 (default) + deprecated v1 side by side: status merging, boot view, paste lines, mailbox URL
-// validation, v1 deprecation migration of saved settings.
+// The v2 private-mailbox connection: status line, boot view, paste line, mailbox URL
+// validation, and dropping what older versions saved for v1.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { bootView, combineStatus, looksLikeDp2, migrateSettings, pasteLineV1, pasteLineV2 } from "../src/connections.ts";
+import { bootView, looksLikeDp2, migrateSettings, OLD_V1_KEYS, pasteLineV2, statusLine } from "../src/connections.ts";
 import { DEFAULT_MAILBOX, validateMailboxUrl } from "../src/net.ts";
 
-describe("combineStatus", () => {
-  it("nothing active: quiet", () => {
-    assert.deepEqual(combineStatus(null, null), { status: "online", text: "" });
+describe("statusLine", () => {
+  it("quiet when not paired or online", () => {
+    assert.deepEqual(statusLine(null), { status: "online", text: "" });
+    assert.deepEqual(statusLine({ status: "online" }), { status: "online", text: "" });
   });
-  it("one connection: same wording as before (no tag)", () => {
-    assert.deepEqual(combineStatus({ status: "online" }, null), { status: "online", text: "" });
-    assert.deepEqual(combineStatus(null, { status: "connecting" }), { status: "connecting", text: "connecting…" });
-    assert.deepEqual(combineStatus(null, { status: "offline", detail: "mailbox unreachable" }), {
+  it("names connecting and offline", () => {
+    assert.deepEqual(statusLine({ status: "connecting" }), { status: "connecting", text: "connecting…" });
+    assert.deepEqual(statusLine({ status: "offline", detail: "mailbox unreachable" }), {
       status: "offline",
       text: "offline · mailbox unreachable",
     });
-    assert.deepEqual(combineStatus({ status: "offline" }, null), { status: "offline", text: "offline · retrying" });
-  });
-  it("both: pets stay live while either is online; the troubled one is named", () => {
-    assert.deepEqual(combineStatus({ status: "offline", detail: "relay unreachable" }, { status: "online" }), {
-      status: "online",
-      text: "relay offline · relay unreachable",
-    });
-    assert.deepEqual(combineStatus({ status: "online" }, { status: "connecting" }), { status: "online", text: "mailbox connecting…" });
-    const both = combineStatus({ status: "offline", detail: "a" }, { status: "offline", detail: "b" });
-    assert.equal(both.status, "offline");
-    assert.equal(both.text, "relay offline · a · mailbox offline · b");
-    assert.equal(combineStatus({ status: "offline" }, { status: "connecting" }).status, "connecting");
+    assert.deepEqual(statusLine({ status: "offline" }), { status: "offline", text: "offline · retrying" });
   });
 });
 
 describe("bootView", () => {
   it("covers every combination", () => {
-    assert.deepEqual(bootView({ v1: false, v1Pending: false, v2: false, v2Seen: false }), { view: "pair-start", code: null });
-    // v2 code no bot used yet: show it again.
-    assert.deepEqual(bootView({ v1: false, v1Pending: false, v2: true, v2Seen: false }), { view: "pair-code", code: "v2" });
-    assert.deepEqual(bootView({ v1: false, v1Pending: false, v2: true, v2Seen: true }), { view: "pets", code: null });
-    // A self-hosted v1 user: pets, whatever v2 is doing.
-    assert.deepEqual(bootView({ v1: true, v1Pending: false, v2: false, v2Seen: false }), { view: "pets", code: null });
-    assert.deepEqual(bootView({ v1: true, v1Pending: false, v2: true, v2Seen: false }), { view: "pets", code: null });
-    assert.deepEqual(bootView({ v1: true, v1Pending: true, v2: false, v2Seen: false }), { view: "pair-code", code: "v1" });
-    assert.deepEqual(bootView({ v1: true, v1Pending: true, v2: true, v2Seen: true }), { view: "pets", code: null });
+    assert.equal(bootView({ paired: false, seen: false }), "pair-start");
+    assert.equal(bootView({ paired: false, seen: true }), "pair-start");
+    // A code no bot used yet: show it again.
+    assert.equal(bootView({ paired: true, seen: false }), "pair-code");
+    assert.equal(bootView({ paired: true, seen: true }), "pets");
   });
 });
 
@@ -68,33 +53,27 @@ describe("validateMailboxUrl", () => {
   });
 });
 
-describe("v1 deprecation", () => {
-  it("drops a saved hosted relay URL and the old Connect-with choice, keeps the rest", () => {
+describe("old v1 state", () => {
+  it("drops relayUrl and pairMode from saved settings, keeps the rest", () => {
     const saved = {
-      relayUrl: "https://grokbot-deskpet-relay.fly.dev",
+      relayUrl: "https://relay.example.com",
       pairMode: "v1",
       mailboxUrl: "https://ntfy.sh",
       petSize: "small",
       petOrder: ["jarvis"],
     };
-    assert.deepEqual(migrateSettings(saved), {
-      settings: { mailboxUrl: "https://ntfy.sh", petSize: "small", petOrder: ["jarvis"] },
-      droppedRetiredRelay: true,
-    });
-    assert.equal(saved.relayUrl, "https://grokbot-deskpet-relay.fly.dev", "input not mutated");
+    assert.deepEqual(migrateSettings(saved), { mailboxUrl: "https://ntfy.sh", petSize: "small", petOrder: ["jarvis"] });
+    assert.equal(saved.relayUrl, "https://relay.example.com", "input not mutated");
+    assert.deepEqual(migrateSettings({ relayUrl: "" }), {});
+    assert.deepEqual(migrateSettings({ pairMode: "v2", petSize: "large" }), { petSize: "large" });
   });
-  it("keeps a self-hosted relay; only removes pairMode", () => {
-    assert.deepEqual(migrateSettings({ relayUrl: "https://relay.example.com", pairMode: "v2" }), {
-      settings: { relayUrl: "https://relay.example.com" },
-      droppedRetiredRelay: false,
-    });
-    assert.equal(migrateSettings({ relayUrl: "https://relay.example.com" }), null, "nothing to do");
+  it("nothing to do on v2-only settings", () => {
+    assert.equal(migrateSettings({ mailboxUrl: "https://ntfy.sh" }), null);
     assert.equal(migrateSettings({}), null);
   });
-  it("the v1 paste line always names the relay (no hosted default)", () => {
-    assert.equal(
-      pasteLineV1("K7Q-42M", "https://relay.example.com"),
-      "Pair with my self-hosted Desk Pet relay https://relay.example.com using code K7Q-42M",
-    );
+  it("clears the old v1 pairing keys but never the v2 ones", () => {
+    assert.deepEqual([...OLD_V1_KEYS].sort(), ["deskpet.paired", "deskpet.pending", "deskpet.token"]);
+    assert.ok(!OLD_V1_KEYS.includes("deskpet.settings"));
+    assert.ok(!OLD_V1_KEYS.includes("deskpet.v2.seen"));
   });
 });

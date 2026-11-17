@@ -2,7 +2,7 @@
 //! message (see `v2.rs`), drops anything forged, replayed, stale or oversize, and hands valid
 //! events to a sink. In the app the sink emits Tauri events:
 //!   mailbox:status  {status: "connecting"|"online"|"offline", detail?}
-//!   mailbox:state   the same JSON shape as the v1 relay's state event (plus "via":"v2")
+//!   mailbox:state   the state event JSON the UI draws pets from (plus "via":"v2")
 //!
 //! The mailbox (ntfy.sh by default, or a self-hosted ntfy) only ever sees ciphertext. The topic
 //! is in the request URL (that's how ntfy works) and is never logged; the key never leaves this
@@ -19,7 +19,7 @@ use futures_util::StreamExt;
 use serde_json::{json, Value};
 use tokio::sync::Notify;
 
-use crate::relay::{backoff_delay, jitter, SseParser, StreamHandle, WakeDetector, WAKE_TICK};
+use crate::stream::{backoff_delay, jitter, SseParser, StreamHandle, WakeDetector, WAKE_TICK};
 use crate::v2::{now_ms, parse_event, Pairing, ReplayGuard, MAX_ENVELOPE};
 
 /// ntfy sends a keepalive every 45 s (ntfy.sh default); allow for two to go missing.
