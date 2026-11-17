@@ -585,9 +585,16 @@ button > svg {
   translate: 0 -2px;
 }
 
+/* Name tag box: the pill, plus the pet window's hover ⚙ hung off its right side (.tag > .gear).
+   Exactly the pill's size, so the pill stays centred under the pet. */
+.pet .tag {
+  position: relative;
+  display: flex;
+  margin-top: -2px;
+}
+
 /* Name tag: a small rounded pill with the bot's colour as a dot. Height = LABEL_H (16) in layout.ts. */
 .pet .name {
-  margin-top: -2px;
   padding: 1px 8px 1px 6px;
   border-radius: 999px;
   background: var(--tag);
@@ -601,6 +608,7 @@ button > svg {
   font-weight: 600;
   max-width: 100px;
   box-sizing: border-box;
+  text-align: center; /* Pet.snapTag rounds the width up by < 2px: split it evenly */
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -625,12 +633,23 @@ button > svg {
     0 2px 6px rgba(0, 0, 0, 0.22);
 }
 
-.pet[data-state="needs_you"] .name {
+/* Pointing at the ⚙ is not pointing at the pet: no lift, no ring (clicking it opens Settings). */
+.pet:has(.gear:hover) canvas {
+  translate: none;
+}
+.pet:has(.gear:hover) .name {
+  box-shadow:
+    0 0 0 0.5px var(--bubble-edge),
+    0 1px 3px rgba(0, 0, 0, 0.18);
+}
+
+/* (.tag .name: stronger than the two rules above, so these rings stay on hover.) */
+.pet[data-state="needs_you"] .tag .name {
   box-shadow:
     0 0 0 1.5px var(--needs),
     0 1px 3px rgba(0, 0, 0, 0.18);
 }
-.pet[data-state="error"] .name {
+.pet[data-state="error"] .tag .name {
   box-shadow:
     0 0 0 1.5px var(--error),
     0 1px 3px rgba(0, 0, 0, 0.18);
@@ -795,12 +814,13 @@ button > svg {
   opacity: 0.7;
 }
 
-/* A bot's own window: a small settings button in the free corner beside the pet, on hover. */
+/* A bot's own window: a small settings button just right of the name tag, on hover. It hangs off
+   the tag box (.tag > .gear), so its centre is the tag's centre by construction: top = 50% - half
+   its height. Gap 6 + width 18 = GEAR_RESERVE in pet-main.ts. */
 .gear {
   position: absolute;
-  /* Same height and baseline as the name tag (bottom 6px, LABEL_H 16) so their centres line up. */
-  bottom: 5px;
-  right: 4px;
+  left: calc(100% + 6px);
+  top: calc(50% - 9px);
   width: 18px;
   height: 18px;
   padding: 0;
@@ -822,8 +842,10 @@ button > svg {
 
 .gear svg {
   display: block;
-  width: 11px;
-  height: 11px;
+  /* 12 in 18: a whole-pixel 3px inset at 1x and 2x (11 put it on a half pixel). */
+  width: 12px;
+  height: 12px;
+  margin: 0; /* not the label gap of button > svg: that pushed the glyph 2px left of centre */
 }
 
 .gear:hover {

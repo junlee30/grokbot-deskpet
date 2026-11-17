@@ -16,11 +16,19 @@ const app = document.querySelector<HTMLDivElement>("#app")!;
 const calm = window.matchMedia("(prefers-reduced-motion: reduce)");
 Pet.reducedMotion = calm.matches;
 calm.addEventListener("change", () => (Pet.reducedMotion = calm.matches));
-app.innerHTML = `
-  <div class="stage" id="stage"></div>
-  <button class="gear" id="gear" title="Settings (or right-click the pet)" aria-label="Settings">${GEAR_SVG}</button>
-`;
+app.innerHTML = `<div class="stage" id="stage"></div>`;
 const stage = document.getElementById("stage") as HTMLDivElement;
+/**
+ * The hover ⚙ hangs off the name tag (Pet.attachToTag; CSS .tag > .gear), so it shares the
+ * tag's centre line by construction. GEAR_RESERVE = its 6px gap + 18px width (style.css).
+ */
+const gear = document.createElement("button");
+gear.className = "gear";
+gear.title = "Settings (or right-click the pet)";
+gear.setAttribute("aria-label", "Settings");
+gear.innerHTML = GEAR_SVG;
+gear.addEventListener("click", () => void invokeCmd("open_settings_window"));
+const GEAR_RESERVE = 24;
 
 /**
  * One tick per 32 ms (~30 fps) on a timer rather than requestAnimationFrame: half the wakeups
@@ -42,30 +50,6 @@ function relayout(): void {
   if (!pet) return;
   const [slot] = layoutPets(1, window.innerWidth, window.innerHeight, cfg.petSize);
   pet.place(slot ?? null);
-  alignGear();
-}
-
-/**
- * Keep the hover ⚙ on the name tag's centre line, just to its right. The tag's position depends
- * on pet size and layout, so it's measured rather than hard-coded; only writes when it moves.
- */
-const gear = document.getElementById("gear") as HTMLButtonElement;
-let gearPos = "";
-function alignGear(): void {
-  const tag = pet?.el.querySelector<HTMLElement>(".name");
-  if (!tag) return;
-  const r = tag.getBoundingClientRect();
-  if (!r.height) return;
-  const size = gear.offsetHeight || 18;
-  const left = Math.min(Math.round(r.right + 6), window.innerWidth - size - 2);
-  const top = Math.round(r.top + r.height / 2 - size / 2);
-  const key = `${left},${top}`;
-  if (key === gearPos) return;
-  gearPos = key;
-  gear.style.left = `${left}px`;
-  gear.style.top = `${top}px`;
-  gear.style.right = "auto";
-  gear.style.bottom = "auto";
 }
 window.addEventListener("resize", relayout);
 
@@ -75,6 +59,7 @@ function apply(e: StateEvent): void {
   if (!pet) {
     pet = new Pet(e.agent_id, e.agent_name || e.agent_id, cfg, art);
     stage.append(pet.el, pet.bubble);
+    pet.attachToTag(gear, GEAR_RESERVE);
     wirePet(pet);
     relayout();
   }
@@ -101,7 +86,8 @@ async function openInGrokBot(): Promise<void> {
 function wirePet(p: Pet): void {
   let down: { x: number; y: number } | null = null;
   p.el.addEventListener("pointerdown", (ev) => {
-    if (ev.button !== 0) return;
+    down = null;
+    if (ev.button !== 0 || (ev.target as Element).closest(".gear")) return; // the ⚙ is its own button
     down = { x: ev.screenX, y: ev.screenY };
   });
   p.el.addEventListener("pointermove", (ev) => {
@@ -130,13 +116,10 @@ app.addEventListener("contextmenu", (ev) => {
   ev.preventDefault();
   void invokeCmd("pet_menu");
 });
-document.getElementById("gear")!.addEventListener("click", () => void invokeCmd("open_settings_window"));
 
 // ---------- render loop ----------
-let gearTick = 0;
 function frame(): void {
   pet?.draw(bank, Date.now(), cfg, offline);
-  if (++gearTick % 16 === 0) alignGear(); // ~2x a second: follows name/size changes cheaply
 }
 
 async function boot(): Promise<void> {

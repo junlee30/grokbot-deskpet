@@ -50,6 +50,10 @@ export class Pet {
   /** What the scratch canvas was last painted from (same inputs: same pixels, skip it). */
   private paintedKey = "";
   private readonly label: HTMLDivElement;
+  /** The name tag's box: the pill, plus anything hung beside it (the pet window's ⚙). */
+  private readonly tag: HTMLDivElement;
+  /** Room kept free on each side of the pill for what hangs beside it, so it stays in the column. */
+  private tagReserve = 0;
   private readonly bubbleText: HTMLSpanElement;
 
   constructor(id: string, name: string, cfg: DeskPetConfig, art: AvatarBank | null = null) {
@@ -84,7 +88,21 @@ export class Pet {
     this.label.className = "name";
     this.label.textContent = name;
     this.el.title = `Open ${name} in Grok Bot`;
-    this.el.append(this.canvas, this.label);
+    this.tag = document.createElement("div");
+    this.tag.className = "tag";
+    this.tag.append(this.label);
+    this.el.append(this.canvas, this.tag);
+  }
+
+  /**
+   * Hang a small control just right of the name pill (CSS .tag > .gear), on its centre line
+   * whatever the pet size or layout. `reserve` (px) is kept free on both sides of the pill so
+   * the pill stays centred under the pet and the control stays inside the column.
+   */
+  attachToTag(control: HTMLElement, reserve: number): void {
+    this.tag.append(control);
+    this.tagReserve = reserve;
+    if (this.slot) this.place(this.slot);
   }
 
   /** Put the pet in its column (or hide it when it doesn't fit: slot null). */
@@ -99,13 +117,26 @@ export class Pet {
     const w = slot.x1 - slot.x0;
     this.el.style.left = `${slot.x0}px`;
     this.el.style.width = `${w}px`;
-    this.label.style.maxWidth = `${Math.max(24, w - 4)}px`;
+    this.label.style.maxWidth = `${Math.max(24, w - 4 - 2 * this.tagReserve)}px`;
+    this.snapTag();
     const css = `${slot.spriteSize}px`;
     if (this.canvas.style.width !== css) {
       this.canvas.style.width = css;
       this.canvas.style.height = css;
     }
     this.positionToast();
+  }
+
+  /**
+   * Give the pill a whole, even width. Centred in its (even, whole-pixel) column, its edges, and
+   * the ⚙ hung off its right edge, then land on whole pixels: a fractional text width put the ⚙
+   * on a sub-pixel x, where its circle snapped to the pixel grid but its glyph didn't.
+   */
+  private snapTag(): void {
+    if (!this.slot) return;
+    this.label.style.width = "";
+    const w = this.label.getBoundingClientRect().width;
+    if (w > 0) this.label.style.width = `${Math.ceil(w / 2 - 0.001) * 2}px`;
   }
 
   /** Measure the toast at its column's max width, then clamp it with the pure layout. */
@@ -150,6 +181,7 @@ export class Pet {
     if (e.agent_name && e.agent_name !== this.name) {
       this.name = e.agent_name;
       this.label.textContent = e.agent_name;
+      this.snapTag();
       this.el.title = `Open ${e.agent_name} in Grok Bot`;
     }
     const at = Math.min(now, Date.parse(e.received_at) || now);
