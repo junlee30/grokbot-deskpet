@@ -1,8 +1,9 @@
 //! Secrets in the OS keychain (macOS Keychain via the `keyring` crate), service
 //! "com.grokbot.deskpet":
 //!
-//!   account "relay-token:<relay host[:port]>"  v1 relay token. A token belongs to exactly one
-//!                                              relay, so changing the relay means pairing again.
+//!   account "relay-token:<relay host[:port]>"  v1 relay token (deprecated, self-hosted relays
+//!                                              only). A token belongs to exactly one relay, so
+//!                                              changing the relay means pairing again.
 //!   account "mailbox-v2"                       v2 pairing string (topic + key + mailbox URL).
 //!
 //! Nothing in here logs secrets. The v1 token never reaches the webview; the v2 pairing string
@@ -69,6 +70,36 @@ pub fn delete(relay: &url::Url) -> Result<(), String> {
     }
 }
 
+// ---------------------------------------------------------------- retired v1 relays
+
+/// Hosts of v1 relays that no longer exist. The hosted relay was shut down on 2026-11-16 when
+/// v1 was deprecated; a token for it can never work again, so the app forgets it on startup
+/// instead of retrying forever, and refuses the URL (see `relay::normalize_relay_url`).
+pub const RETIRED_RELAY_HOSTS: &[&str] = &["grokbot-deskpet-relay.fly.dev"];
+
+pub fn is_retired_relay_host(host: &str) -> bool {
+    RETIRED_RELAY_HOSTS.iter().any(|h| host.eq_ignore_ascii_case(h))
+}
+
+/// Keychain accounts that held tokens for the retired relays.
+pub fn retired_accounts() -> Vec<String> {
+    RETIRED_RELAY_HOSTS.iter().map(|h| format!("relay-token:{h}")).collect()
+}
+
+/// Delete v1 tokens for retired relays. Returns how many entries were removed. Only touches the
+/// `relay-token:<retired host>` accounts, never the v2 pairing (`mailbox-v2`).
+pub fn purge_retired_relay_tokens() -> usize {
+    let mut removed = 0;
+    for account in retired_accounts() {
+        if let Ok(e) = Entry::new(SERVICE, &account) {
+            if e.delete_credential().is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    removed
+}
+
 // ---------------------------------------------------------------- v2 pairing
 
 pub const V2_ACCOUNT: &str = "mailbox-v2";
@@ -106,9 +137,26 @@ mod tests {
     #[test]
     fn account_names_include_non_default_ports() {
         let local = url::Url::parse("http://127.0.0.1:8787").unwrap();
-        let hosted = url::Url::parse("https://grokbot-deskpet-relay.fly.dev").unwrap();
+        let own = url::Url::parse("https://relay.example.com").unwrap();
         assert_eq!(account_for(&local), "relay-token:127.0.0.1:8787");
-        assert_eq!(account_for(&hosted), "relay-token:grokbot-deskpet-relay.fly.dev");
+        assert_eq!(account_for(&own), "relay-token:relay.example.com");
+    }
+
+    #[test]
+    fn retired_relay_cleanup_targets_only_v1_tokens() {
+        assert!(is_retired_relay_host("grokbot-deskpet-relay.fly.dev"));
+        assert!(is_retired_relay_host("GROKBOT-DESKPET-RELAY.FLY.DEV"));
+        assert!(!is_retired_relay_host("relay.example.com"));
+        assert!(!is_retired_relay_host("127.0.0.1"));
+        let accounts = retired_accounts();
+        assert!(!accounts.is_empty());
+        for a in &accounts {
+            assert!(a.starts_with("relay-token:"), "{a}");
+            assert_ne!(a, V2_ACCOUNT, "the v2 pairing is never purged");
+            // Same account name the app used when it stored the token.
+            let host = a.trim_start_matches("relay-token:");
+            assert_eq!(&account_for(&url::Url::parse(&format!("https://{host}")).unwrap()), a);
+        }
     }
 
     #[test]

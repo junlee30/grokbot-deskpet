@@ -446,3 +446,29 @@ button.link + button.link {
 .settings label select {
   max-width: 100%;
 }
+
+/* Settings: the deprecated v1 relay lives in a collapsed "Legacy" section at the bottom. */
+.settings details.legacy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid var(--edge);
+  padding-top: 4px;
+}
+
+.settings details.legacy > summary {
+  font-size: 10.5px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.settings details.legacy[open] > * + * {
+  margin-top: 4px;
+}
+
+.legacy-note {
+  padding-left: 88px;
+  opacity: 0.85;
+}

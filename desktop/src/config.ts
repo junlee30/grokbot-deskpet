@@ -1,14 +1,16 @@
 import type { PetSize } from "./layout.ts";
-import type { PairMode } from "./connections.ts";
+import { migrateSettings } from "./connections.ts";
 import { DEFAULT_MAILBOX, validateMailboxUrl, validateRelayUrl } from "./net.ts";
 
 // App configuration: shipped defaults (public/deskpet.config.json) + local overrides from the
 // settings panel (localStorage). In dev builds the idle->sleeping timeout is short.
 
 export interface DeskPetConfig {
+  /**
+   * Deprecated v1: the user's own relay, or "" (the default) for none. Pairing always makes a
+   * v2 private-mailbox code; v1 lives only in Settings → "Legacy: self-hosted relay".
+   */
   relayUrl: string;
-  /** What "Connect your Grok Bot" creates: v2 private mailbox (default) or a v1 relay code. */
-  pairMode: PairMode;
   /** v2 mailbox base URL used for the next new code (ntfy.sh or a self-hosted ntfy). */
   mailboxUrl: string;
   openUrls: { default: string; agents: Record<string, string> };
@@ -24,8 +26,7 @@ export interface DeskPetConfig {
 const SETTINGS_KEY = "deskpet.settings";
 
 export const DEFAULTS: DeskPetConfig = {
-  relayUrl: "http://127.0.0.1:8787",
-  pairMode: "v2",
+  relayUrl: "",
   mailboxUrl: DEFAULT_MAILBOX,
   openUrls: { default: "https://grok.com", agents: {} },
   accents: {},
@@ -36,7 +37,7 @@ export const DEFAULTS: DeskPetConfig = {
   petOrder: [],
 };
 
-export type Settings = Partial<Pick<DeskPetConfig, "relayUrl" | "pairMode" | "mailboxUrl" | "openUrls" | "petSize" | "petOrder">>;
+export type Settings = Partial<Pick<DeskPetConfig, "relayUrl" | "mailboxUrl" | "openUrls" | "petSize" | "petOrder">>;
 
 function readSettings(): Settings {
   try {
@@ -46,12 +47,26 @@ function readSettings(): Settings {
   }
 }
 
+/** Apply migrateSettings to localStorage once per boot. True if a retired relay URL was dropped. */
+function migrateSavedSettings(): boolean {
+  const m = migrateSettings(readSettings() as Record<string, unknown>);
+  if (!m) return false;
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(m.settings as Settings));
+  return m.droppedRetiredRelay;
+}
+
 /** Merge into the saved settings (only non-secret preferences live here). */
 export function saveSettings(s: Settings): void {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...readSettings(), ...s }));
 }
 
 export async function loadConfig(): Promise<DeskPetConfig> {
+  if (migrateSavedSettings()) {
+    // The v1 pairing state that went with that relay is dead too. (The Rust side deletes its
+    // Keychain token at startup.)
+    localStorage.removeItem(PENDING_KEY);
+    localStorage.removeItem(PAIRED_KEY);
+  }
   let file: Partial<DeskPetConfig> = {};
   try {
     const r = await fetch("deskpet.config.json", { cache: "no-store" });
@@ -67,14 +82,14 @@ export async function loadConfig(): Promise<DeskPetConfig> {
   };
   if (import.meta.env.DEV) cfg.sleepAfterMs = Math.min(cfg.sleepAfterMs, DEFAULTS.sleepAfterMs);
   const s = readSettings();
-  if (s.relayUrl) cfg.relayUrl = s.relayUrl;
-  if (s.pairMode === "v1" || s.pairMode === "v2") cfg.pairMode = s.pairMode;
+  if (typeof s.relayUrl === "string") cfg.relayUrl = s.relayUrl;
   if (s.mailboxUrl) cfg.mailboxUrl = s.mailboxUrl;
   if (s.openUrls) cfg.openUrls = { default: s.openUrls.default || cfg.openUrls.default, agents: { ...cfg.openUrls.agents, ...s.openUrls.agents } };
   if (s.petSize === "large" || s.petSize === "small") cfg.petSize = s.petSize;
   if (Array.isArray(s.petOrder)) cfg.petOrder = s.petOrder.filter((x) => typeof x === "string").slice(0, 64);
-  const v = validateRelayUrl(cfg.relayUrl);
-  cfg.relayUrl = v.ok ? v.url : DEFAULTS.relayUrl;
+  // "" = no legacy relay. Anything invalid (including the retired hosted relay) counts as none.
+  const v = cfg.relayUrl ? validateRelayUrl(cfg.relayUrl) : null;
+  cfg.relayUrl = v?.ok ? v.url : DEFAULTS.relayUrl;
   const mb = validateMailboxUrl(cfg.mailboxUrl);
   cfg.mailboxUrl = mb.ok ? mb.url : DEFAULTS.mailboxUrl;
   return cfg;
@@ -95,7 +110,7 @@ export function urlForAgent(cfg: DeskPetConfig, agentId: string): string {
   return safeUrl(cfg.openUrls.agents[agentId]) ?? safeUrl(cfg.openUrls.default) ?? "https://grok.com";
 }
 
-// ---- local pairing state (NOT the token) ----
+// ---- v1 (deprecated relay) local pairing state (NOT the token) ----
 // The relay token lives in the macOS Keychain, handled entirely by the Rust side (see
 // src-tauri/src/secrets.rs); the webview never sees it. In the browser prototype (vite, no
 // Tauri) it is held in memory only, so a reload means pairing again.

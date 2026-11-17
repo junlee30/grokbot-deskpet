@@ -1,13 +1,13 @@
 import { loadConfig, pairingState, saveSettings, safeUrl, takeLegacyToken, urlForAgent, v2State, type DeskPetConfig } from "./config.ts";
-import { bootView, combineStatus, pasteLineV2, type Conn } from "./connections.ts";
+import { bootView, combineStatus, pasteLineV1, pasteLineV2, type Conn } from "./connections.ts";
 import { layoutPets, orderPets, type PetSize } from "./layout.ts";
-import { DEFAULT_MAILBOX, HOSTED_RELAY, LOCAL_RELAY, validateMailboxUrl, validateRelayUrl } from "./net.ts";
+import { DEFAULT_MAILBOX, LOCAL_RELAY, validateMailboxUrl, validateRelayUrl } from "./net.ts";
 import { Pet } from "./pets.ts";
 import { copyText, inTauri, openExternal, quitApp, startWindowDrag } from "./platform.ts";
 import type { ConnStatus, ReadyEvent, StateEvent, StreamHandlers } from "./relay.ts";
 import { SpriteBank } from "./sprites.ts";
 import { AvatarBank } from "./avatar-bank.ts";
-import { NoMailbox, TauriMailbox, TauriTransport, WebTransport, type Mailbox, type MailboxHandlers, type RelayTransport } from "./transport.ts";
+import { NoMailbox, NoRelay, TauriMailbox, TauriTransport, WebTransport, type Mailbox, type MailboxHandlers, type RelayTransport } from "./transport.ts";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
@@ -41,10 +41,6 @@ app.innerHTML = `
   </section>
 
   <section class="card settings" id="settings" hidden>
-    <label>Connect with <select id="s-mode">
-      <option value="v2">Private mailbox (v2, no server)</option>
-      <option value="v1">Relay (v1)</option>
-    </select></label>
     <div class="conn-row"><span class="small" id="s-v2-state"></span>
       <button type="button" class="chip" id="s-v2-code">Show code</button>
       <button type="button" class="chip" id="s-v2-new">New code</button>
@@ -55,19 +51,23 @@ app.innerHTML = `
       <button type="button" class="chip" id="s-ntfy" title="${DEFAULT_MAILBOX}">ntfy.sh</button>
       <span class="small" id="s-mailbox-note">Used for the next new code.</span>
     </div>
-    <div class="conn-row"><span class="small" id="s-v1-state"></span>
-      <button type="button" class="chip" id="s-v1-pair">Pair</button>
-      <button type="button" class="chip" id="s-unpair">Unpair</button>
-    </div>
-    <label>Relay URL <input id="s-relay" spellcheck="false" autocomplete="off" /></label>
-    <div class="presets">
-      <button type="button" class="chip" id="s-local">Local</button>
-      <button type="button" class="chip" id="s-hosted" title="${HOSTED_RELAY}">Hosted</button>
-      <span class="small" id="s-relay-note">Changing relay means pairing again.</span>
-    </div>
     <label>Click opens <input id="s-default" spellcheck="false" /></label>
     <label>Per-bot links <textarea id="s-agents" rows="1" spellcheck="false" placeholder="jarvis=https://grok.com"></textarea></label>
     <label>Pet size <select id="s-size"><option value="large">Large</option><option value="small">Small</option></select></label>
+    <details class="legacy" id="s-legacy">
+      <summary>Legacy: self-hosted relay (deprecated)</summary>
+      <div class="small legacy-note">v1 is deprecated and the hosted relay is gone. This only works
+        with a relay you run yourself. Use the private mailbox above instead.</div>
+      <div class="conn-row"><span class="small" id="s-v1-state"></span>
+        <button type="button" class="chip" id="s-v1-pair">Pair</button>
+        <button type="button" class="chip" id="s-unpair">Unpair</button>
+      </div>
+      <label>Relay URL <input id="s-relay" spellcheck="false" autocomplete="off" placeholder="https://your-relay.example" /></label>
+      <div class="presets">
+        <button type="button" class="chip" id="s-local" title="${LOCAL_RELAY}">Local</button>
+        <span class="small" id="s-relay-note"></span>
+      </div>
+    </details>
     <div class="row">
       <button class="primary" id="s-save">Save</button>
       <button id="s-quit">Quit</button>
@@ -85,8 +85,8 @@ let cfg: DeskPetConfig;
 const bank = new SpriteBank();
 const art = new AvatarBank(); // Grok Bot avatar art, if it was imported at build time
 const pets = new Map<string, Pet>();
-let transport: RelayTransport; // v1 relay (always exists: it knows the relay URL)
-let v1Active = false; // a v1 token is in the keychain and we stream from the relay
+let transport: RelayTransport; // deprecated v1 relay; NoRelay (inert) unless the user set their own
+let v1Active = false; // a v1 token is in the keychain and we stream from the user's own relay
 let mailbox: Mailbox; // v2 private mailbox
 let v2Active = false; // a v2 pairing is in the keychain and we subscribe to its topic
 let connV1: Conn | null = null;
@@ -141,28 +141,30 @@ function hostOf(u: string): string {
 }
 
 function showPairMode(): void {
-  $("pair-mode").textContent =
-    cfg.pairMode === "v2" && mailbox.supported
-      ? `Private, end-to-end encrypted · via ${hostOf(cfg.mailboxUrl)}`
-      : `Via relay ${hostOf(cfg.relayUrl)}`;
+  $("pair-mode").textContent = mailbox.supported
+    ? `Private, end-to-end encrypted · via ${hostOf(cfg.mailboxUrl)}`
+    : "The private mailbox needs the desktop app";
 }
 
 function makeTransport(relayUrl: string, legacyToken: string | null = null): RelayTransport {
+  if (!relayUrl) return new NoRelay();
   return inTauri ? new TauriTransport(relayUrl) : new WebTransport(relayUrl, legacyToken);
 }
 
 // ---------- pairing ----------
-/** "Connect your Grok Bot": a v2 private-mailbox code by default, or a v1 relay code. */
+/** "Connect your Grok Bot" always makes a v2 private-mailbox code. */
 function beginPairing(): Promise<void> {
-  return cfg.pairMode === "v2" && mailbox.supported ? beginV2() : beginV1();
+  return beginV2();
 }
 
+/** Deprecated v1, from Settings → Legacy only: a code from the user's own relay. */
 async function beginV1(): Promise<void> {
   const err = $("pair-error");
   err.textContent = "";
   const btn = $<HTMLButtonElement>("connect");
   btn.disabled = true;
   try {
+    if (!cfg.relayUrl) throw new Error("no relay");
     const p = await transport.pairStart(); // the token goes to the keychain, never to us
     pairingState.setPending({ code: p.code, expires_at: p.expires_at });
     pairingState.setPaired(false);
@@ -170,7 +172,7 @@ async function beginV1(): Promise<void> {
     showCode();
     void connect();
   } catch {
-    err.textContent = `Can't reach the relay at ${cfg.relayUrl}`;
+    err.textContent = cfg.relayUrl ? `Can't reach the relay at ${cfg.relayUrl}` : "Set your relay URL first";
     if (view !== "pair-start") show("pair-start");
   } finally {
     btn.disabled = false;
@@ -212,10 +214,9 @@ function showCodeV2(code: string, isNew: boolean): void {
   codeKind = "v2";
 }
 
-/** The bot defaults to the hosted relay; any other relay is named in the line. */
+/** v1 paste line: always names the user's own relay (there is no hosted default any more). */
 function pasteLine(code: string): string {
-  const via = cfg.relayUrl === HOSTED_RELAY ? "" : ` using relay ${cfg.relayUrl}`;
-  return `Install the Desk Pet skill and pair with code ${code}${via}`;
+  return pasteLineV1(code, cfg.relayUrl);
 }
 
 function pendingValid(): { code: string; expires_at: string } | null {
@@ -439,10 +440,13 @@ async function refreshConnRows(): Promise<void> {
   $("s-v1-state").textContent = v1 ? `v1: paired · ${hostOf(cfg.relayUrl)}` : "v1: not paired";
   $<HTMLButtonElement>("s-unpair").disabled = !v1;
   $<HTMLButtonElement>("s-v1-pair").hidden = v1;
+  // Collapsed unless a legacy pairing is actually in use.
+  $<HTMLDetailsElement>("s-legacy").open = v1;
 }
 
+const RELAY_NOTE = "Your own relay only. Changing it means pairing again.";
+
 async function openSettings(): Promise<void> {
-  $<HTMLSelectElement>("s-mode").value = cfg.pairMode;
   $<HTMLInputElement>("s-mailbox").value = cfg.mailboxUrl;
   $("s-mailbox-note").textContent = "Used for the next new code.";
   $("s-mailbox-note").classList.remove("error");
@@ -452,20 +456,41 @@ async function openSettings(): Promise<void> {
     .map(([k, v]) => `${k}=${v}`)
     .join("\n");
   $<HTMLSelectElement>("s-size").value = cfg.petSize;
-  $("s-relay-note").textContent = "Changing relay means pairing again.";
+  $("s-relay-note").textContent = RELAY_NOTE;
   $("s-relay-note").classList.remove("error");
   await refreshConnRows();
   $("settings").hidden = false;
 }
 
-async function saveSettingsFromForm(): Promise<void> {
+/** The legacy relay URL field: "" (none) or a valid URL of the user's own relay. */
+function readRelayField(): { ok: true; url: string } | { ok: false } {
   const note = $("s-relay-note");
-  const check = validateRelayUrl($<HTMLInputElement>("s-relay").value);
-  if (!check.ok) {
-    note.textContent = check.error;
-    note.classList.add("error");
-    return;
-  }
+  const raw = $<HTMLInputElement>("s-relay").value.trim();
+  if (!raw) return { ok: true, url: "" };
+  const check = validateRelayUrl(raw);
+  if (check.ok) return check;
+  note.textContent = check.error;
+  note.classList.add("error");
+  $<HTMLDetailsElement>("s-legacy").open = true;
+  return { ok: false };
+}
+
+/** Apply a new legacy relay URL. A v1 token belongs to one relay: revoke + forget the old one. */
+async function applyRelayUrl(url: string): Promise<void> {
+  if (url === cfg.relayUrl) return;
+  const had = v1Active;
+  const oldTransport = transport;
+  saveSettings({ relayUrl: url });
+  cfg.relayUrl = url;
+  oldTransport.stop();
+  if (had) await oldTransport.unpair();
+  transport = makeTransport(url);
+  if (had) await dropV1(false);
+}
+
+async function saveSettingsFromForm(): Promise<void> {
+  const check = readRelayField();
+  if (!check.ok) return;
   const mbNote = $("s-mailbox-note");
   const mb = validateMailboxUrl($<HTMLInputElement>("s-mailbox").value);
   if (!mb.ok) {
@@ -473,7 +498,6 @@ async function saveSettingsFromForm(): Promise<void> {
     mbNote.classList.add("error");
     return;
   }
-  const mode = $<HTMLSelectElement>("s-mode").value === "v1" ? "v1" : "v2";
   const def = safeUrl($<HTMLInputElement>("s-default").value.trim()) ?? "https://grok.com";
   const agents: Record<string, string> = {};
   for (const line of $<HTMLTextAreaElement>("s-agents").value.split("\n")) {
@@ -482,40 +506,39 @@ async function saveSettingsFromForm(): Promise<void> {
     if (m && u) agents[m[1]] = u;
   }
   const size = $<HTMLSelectElement>("s-size").value as PetSize;
-  const relayChanged = check.url !== cfg.relayUrl;
-  const oldTransport = transport;
   saveSettings({
-    relayUrl: check.url,
-    pairMode: mode,
     mailboxUrl: mb.url,
     openUrls: { default: def, agents },
     petSize: size === "small" ? "small" : "large",
   });
+  const relayUrl = cfg.relayUrl;
   cfg = await loadConfig();
+  cfg.relayUrl = relayUrl; // applyRelayUrl owns this one (it has to revoke the old token)
   $("settings").hidden = true;
   showPairMode();
   relayout();
-  if (relayChanged) {
-    // A v1 token belongs to one relay: revoke + forget it there (best effort). v2 is unaffected.
-    const had = v1Active;
-    oldTransport.stop();
-    if (had) await oldTransport.unpair();
-    transport = makeTransport(cfg.relayUrl);
-    if (had) await dropV1(false);
-  }
+  await applyRelayUrl(check.url); // v2 is unaffected
 }
 
 $("gear").addEventListener("click", () => ($("settings").hidden ? void openSettings() : ($("settings").hidden = true)));
 $("s-close").addEventListener("click", () => ($("settings").hidden = true));
 $("s-save").addEventListener("click", () => void saveSettingsFromForm());
 $("s-local").addEventListener("click", () => ($<HTMLInputElement>("s-relay").value = LOCAL_RELAY));
-$("s-hosted").addEventListener("click", () => ($<HTMLInputElement>("s-relay").value = HOSTED_RELAY));
 $("s-ntfy").addEventListener("click", () => ($<HTMLInputElement>("s-mailbox").value = DEFAULT_MAILBOX));
 $("s-unpair").addEventListener("click", () => {
   $("settings").hidden = true;
   void dropV1(true);
 });
-$("s-v1-pair").addEventListener("click", () => {
+$("s-v1-pair").addEventListener("click", async () => {
+  const check = readRelayField();
+  if (!check.ok) return;
+  if (!check.url) {
+    const note = $("s-relay-note");
+    note.textContent = "Enter the URL of your own relay first";
+    note.classList.add("error");
+    return;
+  }
+  await applyRelayUrl(check.url);
   $("settings").hidden = true;
   void beginV1();
 });
@@ -571,14 +594,13 @@ $("copy").addEventListener("click", async () => {
 
 // Network back or window visible again (e.g. after sleep): reconnect now instead of waiting
 // out the backoff. The Rust client also detects wake-from-sleep on its own.
-window.addEventListener("online", () => {
-  transport?.reconnectNow();
-  mailbox?.reconnectNow();
-});
+function reconnectAll(): void {
+  if (v1Active) transport?.reconnectNow();
+  if (v2Active) mailbox?.reconnectNow();
+}
+window.addEventListener("online", reconnectAll);
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState !== "visible") return;
-  transport?.reconnectNow();
-  mailbox?.reconnectNow();
+  if (document.visibilityState === "visible") reconnectAll();
 });
 
 // ---------- render loop ----------
@@ -618,6 +640,8 @@ function drawMini(now: number): void {
 async function boot(): Promise<void> {
   app.classList.toggle("web", !inTauri);
   cfg = await loadConfig();
+  // loadConfig dropped a saved relay URL for the retired hosted relay (the Rust side deletes
+  // its Keychain token at startup). With no relay of the user's own, v1 stays fully off.
   // M0 kept the token in localStorage. Move it into the keychain once, and delete it here either
   // way. (If the old relay kept tokens in memory only, it is dead: the 401 sends us to pairing.)
   const legacy = takeLegacyToken();

@@ -1,8 +1,9 @@
 // Desk Pet for Grok Bot (unofficial, working title).
 //
 // Rust side: the transparent always-on-top window, window-position memory, the opener plugin,
-// the v1 relay client (HTTP + SSE, token in the macOS Keychain) and the v2 mailbox client
-// (ntfy SSE + XChaCha20-Poly1305, pairing in the Keychain). The webview gets status/state
+// the v2 mailbox client (ntfy SSE + XChaCha20-Poly1305, pairing in the Keychain; the default)
+// and the deprecated v1 relay client (HTTP + SSE, token in the macOS Keychain; self-hosted
+// relays only). The webview gets status/state
 // events; it never sees the v1 token, and sees the v2 pairing string only to show/copy it.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -13,6 +14,7 @@ mod v2;
 mod window_state;
 
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use relay::{PairStartOut, RelayState, StreamHandle};
 use serde::Serialize;
@@ -217,6 +219,31 @@ fn v2_reconnect_now(st: State<'_, MailboxState>) {
     }
 }
 
+/// One line in `~/Library/Logs/<identifier>/deskpet.log` (and stderr). Never pass secrets here.
+fn log_line(app: &AppHandle, msg: &str) {
+    use std::io::Write;
+    eprintln!("deskpet: {msg}");
+    let Ok(dir) = app.path().app_log_dir() else { return };
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let ts = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("deskpet.log")) {
+        let _ = writeln!(f, "{ts} {msg}");
+    }
+}
+
+/// v1 is deprecated and the hosted relay is gone: forget a token stored for it, so the app
+/// stops trying to connect. Silent apart from one log line; the v2 pairing is not touched.
+fn purge_retired_relay(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        if secrets::purge_retired_relay_tokens() > 0 {
+            log_line(&app, "removed the v1 token for the retired hosted relay (v1 is deprecated; v2 unaffected)");
+        }
+    });
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -246,6 +273,7 @@ fn main() {
             // A desk pet should not take a Dock slot or the app switcher on macOS.
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            purge_retired_relay(app.handle());
             if let Some(w) = app.get_webview_window("main") {
                 window_state::restore(&w);
                 window_state::track(&w);

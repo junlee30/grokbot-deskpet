@@ -1,7 +1,8 @@
-// v1 + v2 side by side: status merging, boot view, paste line, mailbox URL validation.
+// v2 (default) + deprecated v1 side by side: status merging, boot view, paste lines, mailbox URL
+// validation, v1 deprecation migration of saved settings.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { bootView, combineStatus, looksLikeDp2, pasteLineV2 } from "../src/connections.ts";
+import { bootView, combineStatus, looksLikeDp2, migrateSettings, pasteLineV1, pasteLineV2 } from "../src/connections.ts";
 import { DEFAULT_MAILBOX, validateMailboxUrl } from "../src/net.ts";
 
 describe("combineStatus", () => {
@@ -36,7 +37,7 @@ describe("bootView", () => {
     // v2 code no bot used yet: show it again.
     assert.deepEqual(bootView({ v1: false, v1Pending: false, v2: true, v2Seen: false }), { view: "pair-code", code: "v2" });
     assert.deepEqual(bootView({ v1: false, v1Pending: false, v2: true, v2Seen: true }), { view: "pets", code: null });
-    // Existing v1 user (Jun's case): pets, whatever v2 is doing.
+    // A self-hosted v1 user: pets, whatever v2 is doing.
     assert.deepEqual(bootView({ v1: true, v1Pending: false, v2: false, v2Seen: false }), { view: "pets", code: null });
     assert.deepEqual(bootView({ v1: true, v1Pending: false, v2: true, v2Seen: false }), { view: "pets", code: null });
     assert.deepEqual(bootView({ v1: true, v1Pending: true, v2: false, v2Seen: false }), { view: "pair-code", code: "v1" });
@@ -64,5 +65,36 @@ describe("validateMailboxUrl", () => {
     for (const bad of ["http://ntfy.example.com", "https://u:p@ntfy.sh", "https://ntfy.sh/?x=1", "https://ntfy.sh/#a", "ftp://x", "nope"]) {
       assert.equal(validateMailboxUrl(bad).ok, false, bad);
     }
+  });
+});
+
+describe("v1 deprecation", () => {
+  it("drops a saved hosted relay URL and the old Connect-with choice, keeps the rest", () => {
+    const saved = {
+      relayUrl: "https://grokbot-deskpet-relay.fly.dev",
+      pairMode: "v1",
+      mailboxUrl: "https://ntfy.sh",
+      petSize: "small",
+      petOrder: ["jarvis"],
+    };
+    assert.deepEqual(migrateSettings(saved), {
+      settings: { mailboxUrl: "https://ntfy.sh", petSize: "small", petOrder: ["jarvis"] },
+      droppedRetiredRelay: true,
+    });
+    assert.equal(saved.relayUrl, "https://grokbot-deskpet-relay.fly.dev", "input not mutated");
+  });
+  it("keeps a self-hosted relay; only removes pairMode", () => {
+    assert.deepEqual(migrateSettings({ relayUrl: "https://relay.example.com", pairMode: "v2" }), {
+      settings: { relayUrl: "https://relay.example.com" },
+      droppedRetiredRelay: false,
+    });
+    assert.equal(migrateSettings({ relayUrl: "https://relay.example.com" }), null, "nothing to do");
+    assert.equal(migrateSettings({}), null);
+  });
+  it("the v1 paste line always names the relay (no hosted default)", () => {
+    assert.equal(
+      pasteLineV1("K7Q-42M", "https://relay.example.com"),
+      "Pair with my self-hosted Desk Pet relay https://relay.example.com using code K7Q-42M",
+    );
   });
 });

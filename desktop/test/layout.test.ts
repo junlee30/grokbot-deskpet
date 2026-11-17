@@ -14,7 +14,7 @@ import {
   type Box,
   type PetSize,
 } from "../src/layout.ts";
-import { backoffDelay, HOSTED_RELAY, LOCAL_RELAY, validateRelayUrl } from "../src/net.ts";
+import { backoffDelay, isRetiredRelay, LOCAL_RELAY, validateRelayUrl } from "../src/net.ts";
 
 const W = 360;
 const H = 200;
@@ -110,11 +110,22 @@ describe("toast layout", () => {
   });
 });
 
-describe("relay URL validation", () => {
+describe("relay URL validation (deprecated v1, self-hosted only)", () => {
   it("accepts https and loopback http", () => {
     assert.deepEqual(validateRelayUrl(LOCAL_RELAY), { ok: true, url: LOCAL_RELAY });
-    assert.deepEqual(validateRelayUrl(` ${HOSTED_RELAY}/ `), { ok: true, url: HOSTED_RELAY });
+    assert.deepEqual(validateRelayUrl(" https://relay.example.com/ "), { ok: true, url: "https://relay.example.com" });
     assert.equal(validateRelayUrl("http://localhost:8787").ok, true);
+  });
+  it("refuses the retired hosted relay", () => {
+    for (const u of ["https://grokbot-deskpet-relay.fly.dev", "https://GROKBOT-DESKPET-RELAY.fly.dev/"]) {
+      const r = validateRelayUrl(u);
+      assert.equal(r.ok, false, u);
+      assert.match((r as { error: string }).error, /shut down/);
+      assert.ok(isRetiredRelay(u));
+    }
+    assert.ok(!isRetiredRelay("https://relay.example.com"));
+    assert.ok(!isRetiredRelay("https://deskpet-relay.fly.dev"), "other fly apps are fine");
+    assert.ok(!isRetiredRelay("not a url"));
   });
   it("rejects everything else", () => {
     for (const bad of [

@@ -1,5 +1,6 @@
-// How the UI talks to the relay. Two implementations behind one interface:
+// How the UI talks to the (deprecated, self-hosted-only) v1 relay. Implementations:
 //
+//   NoRelay         no relay configured (the default): never touches the network.
 //   TauriTransport  native app. Rust does all relay HTTP + SSE and keeps the token in the
 //                   macOS Keychain; the webview only gets status/state events. No CORS needed.
 //   WebTransport    browser prototype (vite). fetch from the page, token in memory only, needs
@@ -104,6 +105,22 @@ export class TauriTransport implements RelayTransport {
   private detach(): void {
     for (const u of this.unlisten.splice(0)) u();
   }
+}
+
+/** No v1 relay configured (the default since v1 was deprecated): inert, no network at all. */
+export class NoRelay implements RelayTransport {
+  readonly relayUrl = "";
+  async hasToken(): Promise<boolean> {
+    return false;
+  }
+  async pairStart(): Promise<{ code: string; expires_at: string }> {
+    throw new Error("No relay URL set");
+  }
+  async unpair(): Promise<void> {}
+  async forget(): Promise<void> {}
+  async start(): Promise<void> {}
+  stop(): void {}
+  reconnectNow(): void {}
 }
 
 export class WebTransport implements RelayTransport {

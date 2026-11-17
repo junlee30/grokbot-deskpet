@@ -1,4 +1,5 @@
-//! Relay client in Rust: pairing calls and the SSE subscription.
+//! v1 relay client in Rust (DEPRECATED: self-hosted relays only; the hosted relay is gone and
+//! v2, `mailbox.rs`, is the default): pairing calls and the SSE subscription.
 //!
 //! The webview never sees the relay token and never talks to the relay directly, so the relay
 //! needs no CORS and the token stays in the keychain + this process. Events are forwarded to
@@ -47,8 +48,12 @@ pub fn normalize_relay_url(input: &str) -> Result<url::Url, String> {
         "http" => return Err("https is required (http only for localhost)".into()),
         _ => return Err("relay URL must be http(s)".into()),
     }
-    if u.host_str().is_none() {
-        return Err("relay URL needs a host".into());
+    match u.host_str() {
+        None => return Err("relay URL needs a host".into()),
+        Some(h) if secrets::is_retired_relay_host(h) => {
+            return Err("that hosted relay was shut down; use the private mailbox (v2) or your own relay".into())
+        }
+        Some(_) => {}
     }
     Ok(u)
 }
@@ -380,7 +385,9 @@ mod tests {
     fn url_validation() {
         assert_eq!(normalize_relay_url("http://127.0.0.1:8787").unwrap().as_str(), "http://127.0.0.1:8787/");
         assert!(normalize_relay_url("http://localhost:8787/").is_ok());
-        assert!(normalize_relay_url("https://grokbot-deskpet-relay.fly.dev").is_ok());
+        assert!(normalize_relay_url("https://relay.example.com").is_ok());
+        assert!(normalize_relay_url("https://grokbot-deskpet-relay.fly.dev").is_err(), "retired hosted relay");
+        assert!(normalize_relay_url("https://GrokBot-DeskPet-Relay.fly.dev/").is_err(), "retired, any case");
         assert!(normalize_relay_url("http://example.com").is_err(), "plain http off-host");
         assert!(normalize_relay_url("https://u:p@example.com").is_err());
         assert!(normalize_relay_url("https://example.com/v1").is_err());
