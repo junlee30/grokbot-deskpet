@@ -1,5 +1,7 @@
 <p align="center">
-  <img src="docs/images/hero.png" alt="Desk Pet: Mac 데스크톱 아래쪽에 다섯 마리의 픽셀 아트 로봇 펫이 각자 Grok Bot의 상태를 보여 주고, 'Scout needs you' 알림이 떠 있는 모습" width="100%" />
+  <img src="docs/images/hero.png" alt="Desk Pet: Mac 데스크톱 아래쪽에 다섯 마리의 펫이 각자 Grok Bot의 상태를 보여 주고, 'Scout needs you' 알림이 떠 있는 모습. Jarvis는 검은 블롭, 나머지는 픽셀 아트 로봇" width="100%" />
+  <br />
+  <sub>Jarvis는 Grok Bot의 기본 아바타 모습이에요. 이 그림은 Grok Bot의 것이라 Desk Pet에는 들어 있지 않고, 내 Grok Bot에서 복사해 와요. 나머지 펫은 Desk Pet의 기본 로봇이에요.</sub>
 </p>
 
 <h1 align="center">Desk Pet</h1>
@@ -43,7 +45,7 @@
 봇이 몇 개든 같은 한 줄을 쓰면 돼요. 이 줄에는 펫의 열쇠가 들어 있으니 내 봇에게만 알려 주세요.
 
 <p align="center">
-  <img src="docs/images/demo.gif" alt="움직이는 펫들: Jarvis는 생각 중에서 작업 중, 완료로 바뀌고, Scout는 대답을 기다리고, Nova는 두 가지 일을 저글링하고, 루비는 한국어로 일하고, Pip는 자는 중" width="100%" />
+  <img src="docs/images/demo.gif" alt="움직이는 펫들: Jarvis(검은 블롭)는 생각 중에서 작업 중, 완료로 바뀌고, Scout는 대답을 기다리고, Nova는 두 가지 일을 저글링하고, 루비는 한국어로 일하고, Pip는 자는 중" width="100%" />
 </p>
 
 ## 이런 걸 할 수 있어요
@@ -54,7 +56,7 @@
 - **"기다리는 중" 알림:** 봇이 나를 기다리기 시작하면 macOS 알림이 오고, 메뉴 막대 아이콘에 기다리는 봇 수가 표시돼요.
 - **펫을 클릭**하면 Grok Bot에서 그 봇과의 채팅이 열려요. **오른쪽 클릭**하면 봇이 새 일을 시작할 때까지 그 펫만 숨길 수 있어요.
 - **내 언어로 말해요.** 봇은 나와 대화하는 언어로 상태를 쓰고, 펫이 보여 주는 문구도 그 봇의 언어를 따라가요. 앱 창과 메뉴는 Grok Bot처럼 Mac의 언어 설정을 따라요. 지금은 영어와 한국어를 지원해요.
-- **내 봇처럼 생겼어요.** 같은 Mac에 Grok Bot이 있으면 각 펫이 그 봇의 프로필 사진 모양으로 그려져요. 그림은 Desk Pet이 시작할 때 내 Grok Bot에서 복사해 오고, Desk Pet 자체에는 들어 있지 않아요. Grok Bot이 없으면(그리고 위 그림에서는) 봇 색깔의 오리지널 픽셀 로봇이 나와요.
+- **내 봇처럼 생겼어요.** 같은 Mac에 Grok Bot이 있으면 위의 Jarvis처럼 각 펫이 그 봇의 프로필 사진 모양으로 그려져요. 그림은 Desk Pet이 시작할 때 내 Grok Bot에서 복사해 오고, Desk Pet 자체에는 들어 있지 않아요. Grok Bot이 없으면 나머지 펫들처럼 봇 색깔의 오리지널 픽셀 로봇이 나와요.
 - **라이트·다크 모드, 동작 줄이기, 대비 증가**를 지원해요. Dock 대신 메뉴 막대에 살아요.
 
 ## 작동 방식

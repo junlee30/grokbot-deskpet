@@ -104,8 +104,11 @@ sample bubbles) or `preview.html?controls` (the control window's views, with a f
 `docs/images/` holds the README banner (`hero.png`), the animation (`demo.gif`) and the
 GitHub social preview (`social-preview.jpg`, uploaded by hand in the repo's Settings →
 Social preview). They come from a dev-only scene, `desktop/showcase.html`
-(`npm run dev`, then `/showcase.html?mode=hero|social|gif`), with real `Pet`s drawing the
-**original robot art only**: Grok Bot's avatar art must never appear in published images.
+(`npm run dev`, then `/showcase.html?mode=hero|social|gif`), with real `Pet`s. Jarvis
+wears Grok Bot's default avatar (blob/black, from `public/grokbot-art/`: run `npm run art`
+first); every other pet uses Desk Pet's robot. Showing that one avatar was the owner's
+choice, and the README captions it as Grok Bot's art that Desk Pet doesn't include. Don't
+add more of Grok Bot's art to published images without the same decision.
 
 - Screenshot `hero` and `social` at 1280×640 with a device pixel ratio of 2 (Chrome DevTools
   device toolbar); save `social` as a 1280×640 JPEG under 1 MB.

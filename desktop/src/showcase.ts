@@ -2,13 +2,16 @@
 //   /showcase.html?mode=hero    1280×640 desktop with pets, a notification and the menu bar
 //   /showcase.html?mode=social  1280×640 share card: title on the left, pets on the right
 //   /showcase.html?mode=gif     the hero scene, looping a bot through thinking → working → done
-// Real Pet instances with the ORIGINAL robot art only (no AvatarBank): Grok Bot's avatar art
-// is not ours to publish, so it must never appear in these images. Not part of the build.
+// Jarvis wears Grok Bot's default avatar (blob/black), loaded from public/grokbot-art/
+// (`npm run art`): the owner chose to show it, with a caption saying it is Grok Bot's art
+// and not part of Desk Pet. Every other bot uses Desk Pet's original robot art. Not part of
+// the build.
 import { DEFAULTS, type DeskPetConfig } from "./config.ts";
 import type { PetState, StateEvent } from "./events.ts";
 import { layoutPets, petWindowSize } from "./layout.ts";
 import { Pet } from "./pets.ts";
 import { SpriteBank } from "./sprites.ts";
+import { AvatarBank } from "./avatar-bank.ts";
 
 type Mode = "hero" | "social" | "gif";
 const mode: Mode = ((m) => (m === "social" || m === "gif" ? m : "hero"))(new URLSearchParams(location.search).get("mode"));
@@ -17,6 +20,8 @@ const W = 1280;
 const H = 640;
 const cfg: DeskPetConfig = { ...DEFAULTS, toastMs: 1e9 };
 const bank = new SpriteBank();
+/** Grok Bot's avatar art, for Jarvis only (see the header). */
+const art = new AvatarBank();
 const scene = document.getElementById("scene")!;
 scene.style.width = `${W}px`;
 scene.style.height = `${H}px`;
@@ -25,6 +30,8 @@ interface Bot {
   id: string;
   name: string;
   color: string;
+  /** Draw this bot as its Grok Bot avatar (shape) instead of the robot. */
+  shape?: string;
   x: number;
   y: number;
   lang?: string;
@@ -86,7 +93,7 @@ function addPet(b: Bot): void {
   stage.className = "stage";
   win.append(stage);
   scene.append(win);
-  const pet = new Pet(b.id, b.name, cfg, null); // null: no Grok Bot art, robot only
+  const pet = new Pet(b.id, b.name, cfg, b.shape ? art : null); // null: Desk Pet's robot
   stage.append(pet.el, pet.bubble);
   pet.place(layoutPets(1, PW, PH, "large")[0] ?? null);
   b.pet = pet;
@@ -106,16 +113,18 @@ function post(b: Bot, state: PetState, message?: string, session = "s", ago = 0)
     message,
     ts: iso,
     received_at: iso,
-    avatar: { shape: "blob", color: b.color }, // only its colour is used: robot art, tinted
+    avatar: { shape: b.shape ?? "blob", color: b.color }, // robots only use the colour
     lang: b.lang,
   };
   b.pet!.update(e, now, 1e9);
 }
 
 async function main(): Promise<void> {
-  await bank.load();
+  await Promise.all([bank.load(), art.load()]);
+  if (!art.manifest) throw new Error("no Grok Bot art in public/grokbot-art: run `npm run art`");
   const right = (i: number) => W - 26 - PW - i * (PW - 6);
-  const jarvis: Bot = { id: "jarvis", name: "Jarvis", color: "cyan", x: right(0), y: ROW };
+  // Grok Bot's default avatar: a black blob.
+  const jarvis: Bot = { id: "jarvis", name: "Jarvis", color: "black", shape: "blob", x: right(0), y: ROW };
   const ruby: Bot = { id: "ruby", name: "루비", color: "red", x: right(1), y: ROW, lang: "ko" };
   const scout: Bot = { id: "scout", name: "Scout", color: "orange", x: right(2), y: ROW };
   const nova: Bot = { id: "nova", name: "Nova", color: "blue", x: right(3), y: ROW };
