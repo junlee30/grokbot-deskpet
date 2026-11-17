@@ -1,11 +1,11 @@
 // One bot's own window (pet.html): its pet, toast / working label, thought cloud and name.
 // Rust (src-tauri/src/pet_windows.rs) opens this window on the bot's first event, sends it
 // only this bot's events ("pet:state"), remembers where it is dragged and closes it on unpair.
-import { loadConfig, urlForAgent, type DeskPetConfig } from "./config.ts";
+import { loadConfig, type DeskPetConfig } from "./config.ts";
 import { isStateEvent, type StateEvent } from "./events.ts";
 import { layoutPets } from "./layout.ts";
 import { Pet } from "./pets.ts";
-import { agentOfLabel, EventFeed } from "./petwin.ts";
+import { agentOfLabel, EventFeed, grokbotId, grokbotUrl } from "./petwin.ts";
 import { invokeCmd, onEvent, openExternal, startWindowDrag, windowLabel } from "./platform.ts";
 import { SpriteBank } from "./sprites.ts";
 import { AvatarBank } from "./avatar-bank.ts";
@@ -30,6 +30,8 @@ const art = new AvatarBank();
 let feed: EventFeed | null = null;
 let pet: Pet | null = null;
 let offline = false;
+/** The bot's Grok Bot agent UUID from its newest event that had a valid one. */
+let chatId: string | null = null;
 
 function relayout(): void {
   if (!pet) return;
@@ -40,6 +42,7 @@ window.addEventListener("resize", relayout);
 
 function apply(e: StateEvent): void {
   if (!feed?.accept(e)) return;
+  chatId = grokbotId(e.grokbot_id) ?? chatId;
   if (!pet) {
     pet = new Pet(e.agent_id, e.agent_name || e.agent_id, cfg, art);
     stage.append(pet.el, pet.bubble);
@@ -54,7 +57,18 @@ function setOffline(status: unknown): void {
   app.classList.toggle("offline", offline);
 }
 
-// ---------- interaction: click opens the bot's link, drag moves this window ----------
+/**
+ * A click opens the Grok Bot desktop app on this bot's chat (or just brings Grok Bot to the
+ * front if the bot hasn't sent its id). If Grok Bot isn't installed, nothing happens (Rust
+ * logs that once).
+ */
+async function openInGrokBot(): Promise<void> {
+  const installed = await invokeCmd<boolean>("grokbot_installed").catch(() => false);
+  if (!installed) return;
+  await openExternal(grokbotUrl(chatId)).catch((err) => console.warn("deskpet: opening Grok Bot failed", String(err)));
+}
+
+// ---------- interaction: click opens Grok Bot on this bot's chat, drag moves this window ----------
 function wirePet(p: Pet): void {
   let down: { x: number; y: number } | null = null;
   p.el.addEventListener("pointerdown", (ev) => {
@@ -71,7 +85,7 @@ function wirePet(p: Pet): void {
   p.el.addEventListener("pointerup", () => {
     if (!down) return;
     down = null;
-    void openExternal(urlForAgent(cfg, p.id));
+    void openInGrokBot();
   });
   p.el.addEventListener("pointerleave", () => (down = null));
 }

@@ -1,7 +1,7 @@
 // The main window: pairing, settings, connection status, and "waiting for your bot" while no
 // bot has posted. Every bot is drawn in its own window (pet.html, src/pet-main.ts), opened and
 // placed by the Rust side; this window hides itself while only the pets are needed.
-import { loadConfig, saveSettings, safeUrl, v2State, type DeskPetConfig } from "./config.ts";
+import { loadConfig, saveSettings, v2State, type DeskPetConfig } from "./config.ts";
 import { bootView, pasteLineV2, statusLine, type Conn } from "./connections.ts";
 import type { ConnStatus, StateEvent } from "./events.ts";
 import { petWindowSize, type PetSize } from "./layout.ts";
@@ -50,8 +50,6 @@ app.innerHTML = `
       <button type="button" class="chip" id="s-ntfy" title="${DEFAULT_MAILBOX}">ntfy.sh</button>
       <span class="small" id="s-mailbox-note">Used for the next new code.</span>
     </div>
-    <label>Click opens <input id="s-default" spellcheck="false" /></label>
-    <label>Per-bot links <textarea id="s-agents" rows="1" spellcheck="false" placeholder="jarvis=https://grok.com"></textarea></label>
     <label>Pet size <select id="s-size"><option value="large">Large</option><option value="small">Small</option></select></label>
     <div class="presets">
       <button type="button" class="chip" id="s-reset-pos">Reset pet positions</button>
@@ -248,10 +246,6 @@ async function openSettings(): Promise<void> {
   $<HTMLInputElement>("s-mailbox").value = cfg.mailboxUrl;
   $("s-mailbox-note").textContent = "Used for the next new code.";
   $("s-mailbox-note").classList.remove("error");
-  $<HTMLInputElement>("s-default").value = cfg.openUrls.default;
-  $<HTMLTextAreaElement>("s-agents").value = Object.entries(cfg.openUrls.agents)
-    .map(([k, v]) => `${k}=${v}`)
-    .join("\n");
   $<HTMLSelectElement>("s-size").value = cfg.petSize;
   $("s-reset-note").textContent = "Each bot has its own window: drag it anywhere.";
   await refreshConnRows();
@@ -278,17 +272,9 @@ async function saveSettingsFromForm(): Promise<void> {
     mbNote.classList.add("error");
     return;
   }
-  const def = safeUrl($<HTMLInputElement>("s-default").value.trim()) ?? "https://grok.com";
-  const agents: Record<string, string> = {};
-  for (const line of $<HTMLTextAreaElement>("s-agents").value.split("\n")) {
-    const m = /^\s*([a-z0-9_-]{1,64})\s*=\s*(\S+)\s*$/.exec(line);
-    const u = m && safeUrl(m[2]);
-    if (m && u) agents[m[1]] = u;
-  }
   const size = $<HTMLSelectElement>("s-size").value as PetSize;
   saveSettings({
     mailboxUrl: mb.url,
-    openUrls: { default: def, agents },
     petSize: size === "small" ? "small" : "large",
   });
   cfg = await loadConfig();

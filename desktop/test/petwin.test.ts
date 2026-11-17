@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { StateEvent } from "../src/events.ts";
-import { agentOfLabel, EventFeed, mainWindowVisible, petLabel, samePixels } from "../src/petwin.ts";
+import { agentOfLabel, EventFeed, grokbotId, grokbotUrl, mainWindowVisible, petLabel, samePixels } from "../src/petwin.ts";
 
 function ev(over: Partial<StateEvent> = {}): StateEvent {
   return {
@@ -82,5 +82,49 @@ describe("samePixels (a resting pet leaves its window untouched)", () => {
     assert.equal(samePixels(a, new Uint32Array([0, 0xff00ff00, 8])), false);
     assert.equal(samePixels(a, new Uint32Array([0, 0xff00ff00])), false, "a different canvas size");
     assert.equal(samePixels(new Uint32Array(0), new Uint32Array(0)), true);
+  });
+});
+
+describe("click opens Grok Bot on the bot's chat", () => {
+  const ID = "2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4e5f";
+  const BAD: unknown[] = [
+    "",
+    "jarvis",
+    ID.toUpperCase(),
+    ID.replace(/-/g, ""),
+    `{${ID}}`,
+    ` ${ID}`,
+    `${ID}\n`,
+    `${ID}0`,
+    ID.slice(1),
+    ID.replace("2f06", "2g06"),
+    `${ID}&x=1`,
+    `${ID}#x`,
+    "2f06d68c-1b2a-4c3d-8e9f_0a1b2c3d4e5f",
+    "../../../../-1b2a-4c3d-8e9f-0a1b2c3d4e5f",
+    undefined,
+    null,
+    42,
+    { id: ID },
+    [ID],
+  ];
+
+  it("grokbotId: exactly a lowercase UUID (same rule as Rust v2::grokbot_id_ok)", () => {
+    assert.equal(grokbotId(ID), ID);
+    assert.equal(grokbotId("00000000-0000-0000-0000-000000000000"), "00000000-0000-0000-0000-000000000000");
+    for (const b of BAD) assert.equal(grokbotId(b), null, JSON.stringify(b));
+  });
+
+  it("grokbotUrl: the bot's chat for a valid id, otherwise just Grok Bot", () => {
+    // Same strings as Rust grokbot::chat_url (tested against capabilities/pets.json there).
+    assert.equal(grokbotUrl(ID), `grokbot://app/v1/agent?id=${ID}`);
+    assert.equal(grokbotUrl(null), "grokbot://");
+    for (const b of BAD) assert.equal(grokbotUrl(b), "grokbot://", JSON.stringify(b));
+  });
+
+  it("only ever builds one of the two allowed URL shapes", () => {
+    const allowed = /^grokbot:\/\/(app\/v1\/agent\?id=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?$/;
+    for (const v of [ID, ...BAD]) assert.match(grokbotUrl(v), allowed);
+    assert.equal(new URL(grokbotUrl(ID)).searchParams.get("id"), ID);
   });
 });

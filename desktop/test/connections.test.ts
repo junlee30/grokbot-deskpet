@@ -67,6 +67,11 @@ describe("old v1 state", () => {
     assert.deepEqual(migrateSettings({ relayUrl: "" }), {});
     assert.deepEqual(migrateSettings({ pairMode: "v2", petSize: "large" }), { petSize: "large" });
   });
+  it("drops the old click-opens-a-web-link settings (openUrls)", () => {
+    assert.deepEqual(migrateSettings({ openUrls: { default: "https://grok.com", agents: { jarvis: "https://x" } }, petSize: "small" }), {
+      petSize: "small",
+    });
+  });
   it("nothing to do on v2-only settings", () => {
     assert.equal(migrateSettings({ mailboxUrl: "https://ntfy.sh" }), null);
     assert.equal(migrateSettings({}), null);

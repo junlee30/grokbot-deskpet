@@ -17,6 +17,8 @@ export interface StateEvent {
   received_at: string;
   /** Grok Bot profile avatar names; validated again by parseAvatar. */
   avatar?: { shape: string; color: string };
+  /** The bot's Grok Bot agent UUID; a click opens its chat. Validated again by grokbotId. */
+  grokbot_id?: string;
 }
 
 export type ConnStatus = "connecting" | "online" | "offline";

@@ -29,6 +29,12 @@ getrandom = "0.3"
 # Listing our Keychain items (attributes only) for the one-time v1 token clean-up.
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = { version = "3", default-features = false }
+# "Is Grok Bot installed?" (NSWorkspace URLForApplicationToOpenURL:) before a pet click opens it.
+# Already built for tauri; only the NSWorkspace / NSURL bindings are named here.
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSURL"] }
 
 [dev-dependencies]
+# The opener plugin's own URL matcher, to test capabilities/pets.json.
+glob = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "net"] }

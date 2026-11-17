@@ -48,6 +48,23 @@ export class EventFeed {
   }
 }
 
+/** A Grok Bot agent id: a lowercase UUID, exactly (same rule as Rust v2::grokbot_id_ok). */
+const GROKBOT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+export function grokbotId(v: unknown): string | null {
+  return typeof v === "string" && GROKBOT_ID.test(v) ? v : null;
+}
+
+/**
+ * What a click on a pet opens: Grok Bot on that bot's chat, or just Grok Bot (to the front)
+ * when the bot hasn't sent a valid id. Built only from a validated id; the pets capability
+ * (src-tauri/capabilities/pets.json) allows exactly these two shapes.
+ */
+export function grokbotUrl(id: unknown): string {
+  const ok = grokbotId(id);
+  return ok ? `grokbot://app/v1/agent?id=${ok}` : "grokbot://";
+}
+
 export type MainView = "pair-start" | "pair-code" | "pets";
 
 /**

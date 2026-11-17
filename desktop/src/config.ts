@@ -8,7 +8,6 @@ import { DEFAULT_MAILBOX, validateMailboxUrl } from "./net.ts";
 export interface DeskPetConfig {
   /** v2 mailbox base URL used for the next new code (ntfy.sh or a self-hosted ntfy). */
   mailboxUrl: string;
-  openUrls: { default: string; agents: Record<string, string> };
   accents: Record<string, string>;
   sleepAfterMs: number;
   staleActiveMs: number;
@@ -21,7 +20,6 @@ const SETTINGS_KEY = "deskpet.settings";
 
 export const DEFAULTS: DeskPetConfig = {
   mailboxUrl: DEFAULT_MAILBOX,
-  openUrls: { default: "https://grok.com", agents: {} },
   accents: {},
   sleepAfterMs: import.meta.env.DEV ? 30_000 : 5 * 60_000,
   staleActiveMs: 10 * 60_000,
@@ -29,7 +27,7 @@ export const DEFAULTS: DeskPetConfig = {
   petSize: "large",
 };
 
-export type Settings = Partial<Pick<DeskPetConfig, "mailboxUrl" | "openUrls" | "petSize">>;
+export type Settings = Partial<Pick<DeskPetConfig, "mailboxUrl" | "petSize">>;
 
 function readSettings(): Settings {
   try {
@@ -40,8 +38,8 @@ function readSettings(): Settings {
 }
 
 /**
- * Forget what older versions stored for v1 (the relay): its saved settings fields and its
- * pairing state. (The Rust side deletes leftover v1 tokens from the Keychain.)
+ * Forget what older versions stored: v1 (relay) settings fields and pairing state, and the
+ * old click-opens-a-web-link settings. (The Rust side deletes leftover v1 Keychain tokens.)
  */
 function dropOldV1State(): void {
   const m = migrateSettings(readSettings() as Record<string, unknown>);
@@ -66,32 +64,15 @@ export async function loadConfig(): Promise<DeskPetConfig> {
   const cfg: DeskPetConfig = {
     ...DEFAULTS,
     ...file,
-    openUrls: { ...DEFAULTS.openUrls, ...(file.openUrls ?? {}) },
     accents: { ...(file.accents ?? {}) },
   };
   if (import.meta.env.DEV) cfg.sleepAfterMs = Math.min(cfg.sleepAfterMs, DEFAULTS.sleepAfterMs);
   const s = readSettings();
   if (s.mailboxUrl) cfg.mailboxUrl = s.mailboxUrl;
-  if (s.openUrls) cfg.openUrls = { default: s.openUrls.default || cfg.openUrls.default, agents: { ...cfg.openUrls.agents, ...s.openUrls.agents } };
   if (s.petSize === "large" || s.petSize === "small") cfg.petSize = s.petSize;
   const mb = validateMailboxUrl(cfg.mailboxUrl);
   cfg.mailboxUrl = mb.ok ? mb.url : DEFAULTS.mailboxUrl;
   return cfg;
-}
-
-/** Only http(s) URLs are ever opened. */
-export function safeUrl(u: string | undefined): string | null {
-  if (!u) return null;
-  try {
-    const p = new URL(u);
-    return p.protocol === "https:" || p.protocol === "http:" ? p.toString() : null;
-  } catch {
-    return null;
-  }
-}
-
-export function urlForAgent(cfg: DeskPetConfig, agentId: string): string {
-  return safeUrl(cfg.openUrls.agents[agentId]) ?? safeUrl(cfg.openUrls.default) ?? "https://grok.com";
 }
 
 // ---- v2 (mailbox) pairing state, NOT the secret ----

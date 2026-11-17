@@ -135,6 +135,43 @@ describe("event building and throttling", () => {
     assert.equal(m.parseAvatar("{broken"), null);
   });
 
+  test("grokbot_id: a lowercase UUID or nothing", () => {
+    const id = "2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4e5f";
+    assert.equal(m.parseGrokbotId(id), id);
+    assert.equal(m.parseGrokbotId(`  ${id.toUpperCase()}\n`), id, "trimmed and lowercased before the strict check");
+    for (const bad of [
+      "",
+      "jarvis",
+      id.replace(/-/g, ""),
+      `{${id}}`,
+      `urn:uuid:${id}`,
+      `${id}0`,
+      id.slice(1),
+      id.replace("2f06", "2g06"),
+      `${id}&x=1`,
+      `${id}/../x`,
+      "2f06d68c-1b2a-4c3d-8e9f_0a1b2c3d4e5f",
+      undefined,
+      null,
+      42,
+    ]) {
+      assert.equal(m.parseGrokbotId(bad), null, String(bad));
+    }
+    assert.equal(m.buildEvent({ ...base, grokbotId: id }).grokbot_id, id);
+    assert.ok(!("grokbot_id" in m.buildEvent({ ...base, grokbotId: "not-a-uuid" })), "a bad id is dropped, the event still goes");
+    assert.ok(!("grokbot_id" in m.buildEvent(base)));
+  });
+
+  test("options: --session, --avatar, --grokbot-id (space or =), the rest is the message", () => {
+    const id = "2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4e5f";
+    assert.deepEqual(m.parseArgs(["jarvis", "Jarvis", "done", "turn_end", "All", "good", "--grokbot-id", id, "--avatar=blob/black", "--session", "s-1"]), {
+      pos: ["jarvis", "Jarvis", "done", "turn_end", "All", "good"],
+      opt: { "grokbot-id": id, avatar: "blob/black", session: "s-1" },
+    });
+    assert.deepEqual(m.parseArgs([`--grokbot-id=${id}`]).opt, { "grokbot-id": id });
+    assert.deepEqual(m.parseArgs(["--unknown=x"]).pos, ["--unknown=x"], "unknown options stay in the message");
+  });
+
   test("heartbeat throttle, duplicates, rate-limit backoff", () => {
     const now = 1_000_000_000;
     const st = { sessions: { k: { state: "working", event: "tool_start", message: "", at: now - 60_000 } } };
@@ -225,6 +262,7 @@ describe("CLI against a fake ntfy", () => {
     assert.equal(e.session, "chat-1");
     assert.equal(e.message, "Running tests");
     assert.deepEqual(e.avatar, { shape: "blob", color: "black" });
+    assert.ok(!("grokbot_id" in e), "no --grokbot-id, no field");
     assert.ok(Math.abs(Date.parse(e.ts) - Date.now()) < 10_000);
     const req = fake.requests.findLast((q) => q.method === "POST");
     assert.equal(req.headers["x-firebase"], "no");
@@ -246,6 +284,24 @@ describe("CLI against a fake ntfy", () => {
     assert.deepEqual(got.map((e) => e.state), ["thinking", "working", "done"]);
     assert.ok(got[0].seq < got[1].seq && got[1].seq < got[2].seq);
     assert.deepEqual(got[0].avatar, { shape: "heart", color: "red" });
+  });
+
+  test("publish: --grokbot-id and DESK_PET_GROKBOT_ID reach the event; the option wins; junk is dropped", async () => {
+    const id = "2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4e5f";
+    const other = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+    const before = messages().length;
+    const cases = [
+      { args: ["--grokbot-id", id], env: {}, want: id },
+      { args: [], env: { DESK_PET_GROKBOT_ID: other.toUpperCase() }, want: other },
+      { args: [`--grokbot-id=${id}`], env: { DESK_PET_GROKBOT_ID: other }, want: id },
+      { args: [], env: { DESK_PET_GROKBOT_ID: "javascript:alert(1)" }, want: undefined },
+    ];
+    for (const [i, c] of cases.entries()) {
+      const r = await run(["gid", "Gid", "working", `step${i}`, ...c.args], { env: { ...env(), DESK_PET_SESSION: "chat-gid", ...c.env } });
+      assert.match(r.stderr, /sent 200/);
+    }
+    const got = messages().slice(before).map((x) => JSON.parse(m.open(pairing, x.message).toString()));
+    assert.deepEqual(got.map((e) => e.grokbot_id), cases.map((c) => c.want));
   });
 
   test("node https/http fallback when curl is unavailable", async () => {

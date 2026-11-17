@@ -40,13 +40,15 @@ export function bootView(s: { paired: boolean; seen: boolean }): View {
 export const OLD_V1_KEYS: readonly string[] = ["deskpet.token", "deskpet.pending", "deskpet.paired"];
 
 /**
- * Saved settings without the fields older versions kept for v1 (`relayUrl`, `pairMode`).
- * Returns null when nothing needs to change.
+ * Settings fields older versions saved that are gone: v1's `relayUrl` and `pairMode`, and
+ * `openUrls` (a pet click used to open a web link; now it opens the bot's Grok Bot chat).
  */
+const OLD_SETTINGS_FIELDS = ["relayUrl", "pairMode", "openUrls"];
+
+/** Saved settings without the old fields. Returns null when nothing needs to change. */
 export function migrateSettings(s: Record<string, unknown>): Record<string, unknown> | null {
-  if (!("relayUrl" in s) && !("pairMode" in s)) return null;
+  if (!OLD_SETTINGS_FIELDS.some((k) => k in s)) return null;
   const out: Record<string, unknown> = { ...s };
-  delete out.relayUrl;
-  delete out.pairMode;
+  for (const k of OLD_SETTINGS_FIELDS) delete out[k];
   return out;
 }

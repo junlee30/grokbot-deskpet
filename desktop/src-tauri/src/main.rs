@@ -7,6 +7,7 @@
 // string, and only to show/copy the paste line.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod grokbot;
 mod mailbox;
 mod pet_windows;
 mod pets;
@@ -202,6 +203,7 @@ fn main() {
             pet_windows::open_settings_window,
             pet_windows::pet_menu,
             pet_windows::app_quit,
+            grokbot::grokbot_installed,
         ])
         .setup(|app| {
             // A desk pet should not take a Dock slot or the app switcher on macOS.

@@ -1,14 +1,23 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "pets",
-  "description": "One window per bot: drag the window and open http(s) links only.",
-  "windows": ["pet-*"],
+  "description": "One window per bot: drag the window; a click opens Grok Bot on that bot's chat (grokbot://app/v1/agent?id=<uuid>) or just Grok Bot (grokbot://). No other links.",
+  "windows": [
+    "pet-*"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
     {
       "identifier": "opener:allow-open-url",
-      "allow": [{ "url": "https://*" }, { "url": "http://*" }]
+      "allow": [
+        {
+          "url": "grokbot://"
+        },
+        {
+          "url": "grokbot://app/v1/agent[?]id=[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]"
+        }
+      ]
     }
   ]
 }

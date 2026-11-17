@@ -1,8 +1,4 @@
 {
-  "openUrls": {
-    "default": "https://grok.com",
-    "agents": {}
-  },
   "accents": {},
   "sleepAfterMs": 300000,
   "staleActiveMs": 600000,

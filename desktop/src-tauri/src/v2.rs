@@ -224,6 +224,8 @@ pub struct BotEvent {
     pub ts_ms: i64,
     pub seq: u64,
     pub avatar: Option<(String, String)>,
+    /// The bot's Grok Bot agent UUID (lowercase), for opening its chat; dropped unless valid.
+    pub grokbot_id: Option<String>,
 }
 
 fn text(o: &Map<String, Value>, k: &str, max: usize, required: bool) -> Result<Option<String>, &'static str> {
@@ -247,6 +249,16 @@ fn agent_id_ok(s: &str) -> bool {
 
 fn event_ok(s: &str) -> bool {
     (1..=64).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"_.:-".contains(&b))
+}
+
+/// A Grok Bot agent id: exactly a lowercase UUID, `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` in
+/// `[0-9a-f]`. Nothing else (no upper case, braces, `urn:`, spaces) gets through.
+pub fn grokbot_id_ok(s: &str) -> bool {
+    s.len() == 36
+        && s.bytes().enumerate().all(|(i, b)| match i {
+            8 | 13 | 18 | 23 => b == b'-',
+            _ => b.is_ascii_digit() || (b'a'..=b'f').contains(&b),
+        })
 }
 
 fn avatar(v: Option<&Value>) -> Result<Option<(String, String)>, &'static str> {
@@ -290,6 +302,8 @@ pub fn parse_event(plaintext: &[u8]) -> Result<BotEvent, &'static str> {
         ts_ms,
         seq,
         avatar: avatar(o.get("avatar"))?,
+        // Optional and only decoration: a bad one is dropped, the event still counts.
+        grokbot_id: o.get("grokbot_id").and_then(Value::as_str).filter(|s| grokbot_id_ok(s)).map(str::to_string),
     })
 }
 
@@ -313,6 +327,9 @@ impl BotEvent {
         }
         if let Some((shape, color)) = &self.avatar {
             m["avatar"] = json!({"shape": shape, "color": color});
+        }
+        if let Some(id) = &self.grokbot_id {
+            m["grokbot_id"] = json!(id);
         }
         m
     }
@@ -623,6 +640,47 @@ mod tests {
         let e = parse_event(Value::Object(o).to_string().as_bytes()).unwrap();
         assert_eq!(e.agent_name, "jarvis", "blank name -> agent_id");
         assert_eq!(e.avatar, None);
+    }
+
+    #[test]
+    fn grokbot_id_is_a_strict_lowercase_uuid() {
+        let id = "2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4e5f";
+        assert!(grokbot_id_ok(id));
+        assert!(grokbot_id_ok("00000000-0000-0000-0000-000000000000"));
+        for bad in [
+            "",
+            "jarvis",
+            "2F06D68C-1B2A-4C3D-8E9F-0A1B2C3D4E5F",
+            "2f06d68c1b2a4c3d8e9f0a1b2c3d4e5f",
+            "{2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4e5f}",
+            " 2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4e5f",
+            "2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4e5f ",
+            "2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4e5",
+            "2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4e5f0",
+            "2f06d68c-1b2a-4c3d-8e9f_0a1b2c3d4e5f",
+            "2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4e5g",
+            "2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4e&x",
+            "2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d/../",
+            "2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4e\u{e9}",
+            "2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4é",
+        ] {
+            assert!(!grokbot_id_ok(bad), "{bad:?}");
+        }
+
+        // In an event: kept and passed on when valid; dropped (event still fine) otherwise.
+        let mut o = serde_json::from_slice::<Value>(&event_json(1, "2026-11-16T12:00:00Z")).unwrap();
+        o["grokbot_id"] = json!(id);
+        let e = parse_event(o.to_string().as_bytes()).unwrap();
+        assert_eq!(e.grokbot_id.as_deref(), Some(id));
+        assert_eq!(e.to_ui_json(0)["grokbot_id"], id);
+        for bad in [json!("2F06D68C-1B2A-4C3D-8E9F-0A1B2C3D4E5F"), json!("grokbot://x"), json!(7), json!({"id": id}), json!([id]), Value::Null] {
+            o["grokbot_id"] = bad.clone();
+            let e = parse_event(o.to_string().as_bytes()).expect("a bad grokbot_id never drops the event");
+            assert_eq!(e.grokbot_id, None, "{bad}");
+            assert!(e.to_ui_json(0).get("grokbot_id").is_none(), "{bad}");
+        }
+        let e = parse_event(&event_json(1, "2026-11-16T12:00:00Z")).unwrap();
+        assert_eq!(e.grokbot_id, None, "absent");
     }
 
     #[test]
