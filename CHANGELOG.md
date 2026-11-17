@@ -3,6 +3,13 @@
 Desk Pet app releases (`v…` tags, [GitHub releases](https://github.com/junlee30/grokbot-deskpet/releases)).
 The bot skill has its own versions (`skill-v…` tags); the skill version each app expects is noted.
 
+## Unreleased
+
+- **Homebrew:** `brew install --cask junlee30/tap/desk-pet`. The cask follows each published
+  release.
+- **npm:** the bot publisher is on npm as `deskpet-publish` (same file the skill pins by
+  SHA-256), for driving a pet from anything that can run a command.
+
 ## 0.4.0 · 2026-11-17
 
 Expects skill **2.2.0**.

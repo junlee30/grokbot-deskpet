@@ -1,0 +1,59 @@
+name: npm
+
+# Push a skill tag like skill-v2.2.1 (it must match skill/package.json and the publisher's
+# VERSION) to publish `deskpet-publish` to npm, with provenance linking the package to this
+# commit. The package is the same file SKILL.md pins by SHA-256.
+#
+# Uses npm trusted publishing (OIDC): no npm token is stored here. On npmjs.com, the
+# deskpet-publish package → Settings → Trusted publishing → GitHub Actions, repository
+# junlee30/grokbot-deskpet, workflow npm.yml (docs/DEVELOPMENT.md, "Releasing").
+
+on:
+  push:
+    tags: ["skill-v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Skill tag to publish, like skill-v2.2.0"
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      # Trusted publishing needs npm 11.5.1 or newer: Node 24 ships it.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Tag matches the package and the publisher
+        run: |
+          case "$TAG" in skill-v[0-9]*) ;; *) echo "not a skill tag: $TAG"; exit 1 ;; esac
+          want="${TAG#skill-v}"
+          pkg="$(node -p 'require("./skill/package.json").version')"
+          bin="$(node skill/deskpet-publish --version)"
+          [ "$pkg" = "$want" ] || { echo "skill/package.json is $pkg, tag is $TAG"; exit 1; }
+          [ "$bin" = "deskpet-publish $want" ] || { echo "publisher says '$bin', tag is $TAG"; exit 1; }
+          echo "VERSION=$want" >> "$GITHUB_ENV"
+
+      - name: Publisher tests (include the SKILL.md SHA-256 pin)
+        run: node --test skill/test/*.test.mjs
+
+      - name: Publish
+        working-directory: skill
+        run: |
+          if npm view "deskpet-publish@$VERSION" version >/dev/null 2>&1; then
+            echo "deskpet-publish $VERSION is already on npm"; exit 0
+          fi
+          npm publish --access public

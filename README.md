@@ -28,7 +28,11 @@
 
 ## Download
 
-**[Download Desk Pet for macOS](https://github.com/junlee30/grokbot-deskpet/releases/latest)** (Apple silicon and Intel), open the `.dmg` and drag **Desk Pet** to Applications.
+**[Download Desk Pet for macOS](https://github.com/junlee30/grokbot-deskpet/releases/latest)** (Apple silicon and Intel), open the `.dmg` and drag **Desk Pet** to Applications. Or with [Homebrew](https://brew.sh):
+
+```bash
+brew install --cask junlee30/tap/desk-pet
+```
 
 > [!NOTE]
 > Desk Pet isn't signed with an Apple Developer ID yet. The first time, **right-click Desk Pet.app → Open**, or allow it in System Settings → Privacy & Security. If macOS still refuses, clear the download flag:
@@ -43,6 +47,8 @@
 3. Its pet pops up on your desk within about a second.
 
 The same line works for every bot you have. It contains the key to your pets, so only share it with your own bots.
+
+**Not a Grok Bot?** Anything that can run a command can drive a pet: the publisher is on npm as [`deskpet-publish`](https://www.npmjs.com/package/deskpet-publish) (`npx -y deskpet-publish@2.2.0 --help`). See [skill/README.md](skill/README.md).
 
 <p align="center">
   <img src="docs/images/demo.gif" alt="Pets animating: Jarvis goes from thinking to working to done, Scout waits for an answer, Nova juggles two tasks, 루비 works in Korean, Pip sleeps" width="100%" />

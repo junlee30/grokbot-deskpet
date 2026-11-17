@@ -28,7 +28,11 @@
 
 ## 다운로드
 
-**[macOS용 Desk Pet 다운로드](https://github.com/junlee30/grokbot-deskpet/releases/latest)** (Apple 실리콘, Intel 모두 지원). `.dmg`를 열고 **Desk Pet**을 응용 프로그램 폴더로 끌어다 놓으세요.
+**[macOS용 Desk Pet 다운로드](https://github.com/junlee30/grokbot-deskpet/releases/latest)** (Apple 실리콘, Intel 모두 지원). `.dmg`를 열고 **Desk Pet**을 응용 프로그램 폴더로 끌어다 놓으세요. [Homebrew](https://brew.sh)로 설치할 수도 있어요:
+
+```bash
+brew install --cask junlee30/tap/desk-pet
+```
 
 > [!NOTE]
 > 아직 Apple 개발자 ID로 서명하지 않은 앱이에요. 처음 열 때는 **Desk Pet.app을 오른쪽 클릭 → 열기**를 누르거나, 시스템 설정 → 개인정보 보호 및 보안에서 허용해 주세요. 그래도 열리지 않으면 다운로드 표시를 지우세요:
@@ -43,6 +47,8 @@
 3. 1초쯤 뒤 데스크톱에 그 봇의 펫이 나타나요.
 
 봇이 몇 개든 같은 한 줄을 쓰면 돼요. 이 줄에는 펫의 열쇠가 들어 있으니 내 봇에게만 알려 주세요.
+
+**Grok Bot이 아니어도 돼요.** 명령을 실행할 수 있는 거라면 무엇이든 펫을 움직일 수 있어요. 퍼블리셔는 npm에 [`deskpet-publish`](https://www.npmjs.com/package/deskpet-publish)로 올라가 있어요(`npx -y deskpet-publish@2.2.0 --help`). [skill/README.md](skill/README.md)(영어)를 봐 주세요.
 
 <p align="center">
   <img src="docs/images/demo.gif" alt="움직이는 펫들: Jarvis는 생각 중에서 작업 중, 완료로 바뀌고, Scout는 대답을 기다리고, Nova는 두 가지 일을 저글링하고, 루비는 한국어로 일하고, Pip는 자는 중" width="100%" />

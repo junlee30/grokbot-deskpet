@@ -1,0 +1,32 @@
+{
+  "name": "deskpet-publish",
+  "version": "2.2.0",
+  "description": "Post end-to-end encrypted status updates from a Grok Bot (or any agent) to its pixel-art Desk Pet on your Mac.",
+  "keywords": [
+    "desk-pet",
+    "grok-bot",
+    "agent",
+    "status",
+    "ntfy",
+    "xchacha20-poly1305",
+    "macos"
+  ],
+  "homepage": "https://github.com/junlee30/grokbot-deskpet#readme",
+  "bugs": "https://github.com/junlee30/grokbot-deskpet/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/junlee30/grokbot-deskpet.git",
+    "directory": "skill"
+  },
+  "license": "Apache-2.0",
+  "bin": {
+    "deskpet-publish": "deskpet-publish"
+  },
+  "files": [
+    "deskpet-publish",
+    "SKILL.md"
+  ],
+  "engines": {
+    "node": ">=12"
+  }
+}

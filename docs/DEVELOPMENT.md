@@ -124,14 +124,31 @@ never contain it.
    appears, and the tests fail until they all agree: `VERSION` in `skill/deskpet-publish`,
    `publisher_version` in `protocol/v2.json`, `DP_VERSION` and `DP_SHA256`
    (`shasum -a 256 skill/deskpet-publish`) in `skill/SKILL.md`, and `SKILL_VERSION` in
-   `desktop/src/connections.ts`. After merging, push the tag `skill-v<version>`: bots
-   download SKILL.md and the publisher from that tag, and the app's paste line and
-   **Copy Skill Link** point at it. Never move an existing `skill-v…` tag. Pets ask bots on an
+   `desktop/src/connections.ts`, and `version` in `skill/package.json`. After merging, push
+   the tag `skill-v<version>`: bots download SKILL.md and the publisher from that tag, the
+   app's paste line and **Copy Skill Link** point at it, and `.github/workflows/npm.yml`
+   publishes the same file to npm as `deskpet-publish` (with provenance). Never move an existing `skill-v…` tag. Pets ask bots on an
    older publisher to update.
 2. Push a tag `v<version>`. `.github/workflows/release.yml` checks the tag matches, builds a
    universal (Apple silicon + Intel) `.app` and `.dmg` with no Grok Bot art (the app copies it
    from the user's Grok Bot at runtime; the workflow fails if any reaches the bundle), and attaches the `.dmg` to a **draft** GitHub release. Publish the
    draft by hand. A manual run (`workflow_dispatch`) keeps the `.dmg` as a workflow artifact.
+3. Publishing the release runs `.github/workflows/homebrew.yml`, which points
+   `Casks/desk-pet.rb` in [junlee30/homebrew-tap](https://github.com/junlee30/homebrew-tap) at
+   the new `.dmg` (version and SHA-256). Check with `brew upgrade --cask desk-pet`.
+
+**Homebrew tap.** `brew install --cask junlee30/tap/desk-pet` (installing by the full name
+trusts the tap). The workflow needs the `HOMEBREW_TAP_TOKEN` secret: a fine-grained token
+with **Contents: read and write** on `junlee30/homebrew-tap` only. Without it the workflow
+prints the version and SHA-256 to put in the cask by hand. Homebrew's own cask list won't
+take unsigned apps, so the cask lives in our tap.
+
+**npm.** `deskpet-publish` is published by `.github/workflows/npm.yml` through npm trusted
+publishing (OIDC), so no npm token is stored: on npmjs.com, the package → **Settings →
+Trusted publishing → GitHub Actions**, repository `junlee30/grokbot-deskpet`, workflow
+`npm.yml`. The first version (2.2.0) was published by hand, because trusted publishing can
+only be set up on a package that exists. The workflow skips versions already on npm, and
+`skill/test` checks the package ships only the publisher, SKILL.md and its README.
 
 **Unsigned (today).** Without signing secrets the app is ad-hoc signed. The first time,
 people right-click **Desk Pet.app → Open** (or allow it in System Settings → Privacy &

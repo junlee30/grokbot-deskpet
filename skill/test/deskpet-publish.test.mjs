@@ -481,6 +481,24 @@ describe("CLI against a fake ntfy", () => {
   });
 });
 
+describe("npm package (deskpet-publish)", () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(here, "..", "package.json"), "utf8"));
+
+  test("is this publisher, at its version", () => {
+    assert.equal(pkg.name, "deskpet-publish");
+    assert.equal(pkg.version, m.VERSION, "bump skill/package.json version with VERSION");
+    assert.deepEqual(pkg.bin, { "deskpet-publish": "deskpet-publish" });
+    assert.equal(pkg.engines.node, ">=12");
+    assert.equal(pkg.dependencies, undefined, "the publisher has no dependencies");
+  });
+
+  test("ships only the publisher, SKILL.md and the README", () => {
+    const [packed] = JSON.parse(execFileSync("npm", ["pack", "--dry-run", "--json"], { cwd: path.join(here, ".."), encoding: "utf8" }));
+    assert.deepEqual(packed.files.map((f) => f.path).sort(), ["README.md", "SKILL.md", "deskpet-publish", "package.json"]);
+    assert.equal(packed.files.find((f) => f.path === "deskpet-publish").mode & 0o111, 0o111, "deskpet-publish is executable");
+  });
+});
+
 describe("SKILL.md install step", () => {
   const skill = fs.readFileSync(path.join(here, "..", "SKILL.md"), "utf8");
   const start = skill.indexOf("   ```bash\n   DP_VERSION=");

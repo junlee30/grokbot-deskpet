@@ -1,0 +1,58 @@
+name: Homebrew
+
+# When a release is published (the Release workflow only drafts it), point the cask in
+# junlee30/homebrew-tap at the new .dmg, so `brew install --cask junlee30/tap/desk-pet` and
+# `brew upgrade` pick it up.
+#
+# Needs the HOMEBREW_TAP_TOKEN secret: a fine-grained token with Contents: read and write on
+# junlee30/homebrew-tap only (docs/DEVELOPMENT.md, "Releasing"). Without it, this prints the
+# new version and SHA-256 so the cask can be updated by hand.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to point the cask at, like v0.4.0"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  cask:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - name: Find the release's .dmg
+        run: |
+          case "$TAG" in v[0-9]*) ;; *) echo "not an app release tag: $TAG"; exit 1 ;; esac
+          version="${TAG#v}"
+          dmg="Desk.Pet_${version}_universal.dmg"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$dmg" --dir dl
+          sha="$(sha256sum "dl/$dmg" | cut -d' ' -f1)"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "SHA256=$sha" >> "$GITHUB_ENV"
+          echo "desk-pet $version: $dmg sha256 $sha"
+
+      - name: Update junlee30/homebrew-tap
+        if: env.TAP_TOKEN != ''
+        run: |
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/junlee30/homebrew-tap.git" tap
+          cd tap
+          sed -i -E "s/^  version \".*\"$/  version \"$VERSION\"/; s/^  sha256 \".*\"$/  sha256 \"$SHA256\"/" Casks/desk-pet.rb
+          grep -q "version \"$VERSION\"" Casks/desk-pet.rb && grep -q "sha256 \"$SHA256\"" Casks/desk-pet.rb
+          if git diff --quiet; then echo "cask already at $VERSION"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "desk-pet $VERSION"
+          git push
+
+      - name: No token
+        if: env.TAP_TOKEN == ''
+        run: |
+          echo "::warning::HOMEBREW_TAP_TOKEN isn't set: update Casks/desk-pet.rb in junlee30/homebrew-tap by hand to version $VERSION, sha256 $SHA256"
