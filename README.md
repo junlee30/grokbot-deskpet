@@ -4,7 +4,7 @@
 
 A tiny always-on-top desktop pet that shows **one pixel-art Grok Bot per bot** and animates it
 from the bots' lifecycle status: thinking, working, juggling helpers, waiting on you, done,
-error, sleeping. Click a pet to open its link (default `https://grok.com`).
+error, sleeping. Click a pet to open the Grok Bot desktop app on that bot's chat.
 
 Status: **v2**: **local-first, zero server cost.** The pet and its bots talk through a free
 public **ntfy.sh** topic (or your own ntfy) with **end-to-end encryption**: there is no Desk Pet
@@ -130,7 +130,7 @@ Both machines only have outbound HTTPS, so v2 uses a public pub/sub mailbox both
   Catch-up events carry ntfy's receive time, so old messages don't toast or replay "done".
 - **Publisher** (`skill/deskpet-publish`): `pair` (code on stdin, checksum-checked, written
   0600), `status`, `unpair`, and `<agent_id> <agent_name> <state> <event> [message]
-  [--session id] [--avatar shape/color]`. Always exits 0 within ~3.5 s, prints nothing unless
+  [--session id] [--avatar shape/color] [--grokbot-id uuid]` (or `DESK_PET_GROKBOT_ID`). Always exits 0 within ~3.5 s, prints nothing unless
   `DESK_PET_DEBUG=1`. It posts via `curl` with the URL on stdin (`-K -`), so nothing secret
   is on a command line, falling back to Node's `https`. Sends `X-Firebase: no`.
 - **ntfy.sh limits**: anonymous use allows **250 messages/day per IP** (shared by every bot on
@@ -152,10 +152,12 @@ What a bot sends, inside the encryption (`deskpet-publish` builds and checks it)
 | `message`    | string | optional, ≤ 160 chars, no control chars; shown as a toast |
 | `ts`         | string | required, ISO-8601; within ±10 min of the pet's clock |
 | `avatar`     | object | optional, exactly `{shape, color}`; `shape` one of `arch bean blob capsule cloud clover crystal cylinder dome egg flower gem heart hex house leaf pebble pumpkin shield sparkle square squircle star tablet teardrop wedge`, `color` one of `black brown red orange yellow green cyan blue violet magenta gray` (case-insensitive) |
+| `grokbot_id` | string | optional, the bot's Grok Bot agent UUID, exactly `[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}` (lowercase); anything else is dropped from the event (the event itself still counts). `--grokbot-id <uuid>` or `DESK_PET_GROKBOT_ID` |
 | `seq`        | int    | added by the publisher; strictly increasing per `agent_id` + `session` |
 
-The pet keeps the latest avatar per bot. An event that breaks a rule is dropped; unknown fields
-are ignored (they are authenticated, so newer bots can add some) and never reach the UI.
+The pet keeps the latest avatar and `grokbot_id` per bot. An event that breaks a rule is
+dropped (except a bad `grokbot_id`, which is only left out); unknown fields are ignored (they
+are authenticated, so newer bots can add some) and never reach the UI.
 
 ## Running it
 
@@ -206,7 +208,7 @@ for app icons).
   pet, its toast or working label above it, and its name below, so one bot's bubble never
   covers another bot. Pet windows never take keyboard focus.
   - **Drag** a pet (or the space around it) to move just that bot's window, anywhere, including
-    onto another monitor. A click (no drag) still opens the bot's link.
+    onto another monitor. A click (no drag) opens Grok Bot on that bot's chat (below).
   - **Positions are remembered per bot** across restarts in the app config dir (`pets.json`,
     logical points, keyed by `agent_id`). A saved spot is restored only if it is on a connected
     monitor, clamped fully onto it; otherwise (and for new bots) the pet goes to the first free
@@ -257,9 +259,13 @@ for app icons).
   cut to 48 characters and at most 2 lines (full text in the tooltip), until the state ends. A
   fresh toast with different text shows on top for its 5 s, then the label returns. The logic
   is in `src/presence.ts` (pure, unit-tested).
-- Multiple sessions per bot: the highest-priority state wins:
-  `needs_you > error > juggling > working > thinking > done > idle`. Active states with no
-  update for 10 min count as idle (bots send heartbeats about every 5 min in long turns).
+- Multiple sessions per bot: the bot's **newest event decides** its pet (bot `ts`, then
+  `seq`, then arrival order); an older session's state stops counting, so an old `needs_you`
+  can't outrank a newer `done`. One exception: two or more sessions active
+  (thinking/working/juggling) and heard from within 2 min show **juggling**, unless the newest
+  event is `needs_you` or `error`. Active states, `needs_you` and `error` with no update for
+  10 min fade to idle (bots send heartbeats about every 5 min in long turns). The rules are in
+  `src/sessions.ts` (pure, unit-tested).
 - `done` plays once, then idle. Idle for 5 min (30 s in `vite` dev) → sleeping.
 - **Connection** (Rust, `mailbox.rs`):
   - Mailbox unreachable: pets dim to the offline sprite with "offline · …".
@@ -273,11 +279,19 @@ for app icons).
     another bot computer), **New code** (needs a second click: new topic and key, old bots go
     unheard), **Unpair** (deletes topic and key); **Pair** when nothing is paired.
   - **Mailbox URL**: `https://ntfy.sh` (chip) or your own ntfy; it applies to the next new code.
-  - **Click opens**, **Per-bot links**, **Pet size**, **Reset pet positions**.
-- Click (not drag) a pet → opens its URL via `tauri-plugin-opener` (capability allows only
-  `http(s)://*`). Configure in `desktop/public/deskpet.config.json`
-  (`openUrls.default`, `openUrls.agents.{agent_id}`) or in the settings panel. Default
-  fallback is `https://grok.com`. There are no invented per-bot deep links.
+  - **Pet size**, **Reset pet positions**.
+- **Click (not drag) a pet → Grok Bot opens on that bot's chat.** The pet opens
+  `grokbot://app/v1/agent?id=<grokbot_id>` through `tauri-plugin-opener`, using the bot's
+  newest valid `grokbot_id`. A bot that hasn't sent one gets `grokbot://`, which just brings
+  Grok Bot to the front.
+  - The URL is built only from a validated UUID (`grokbotUrl` in `src/petwin.ts`, same rule as
+    `v2::grokbot_id_ok` in Rust). The pet windows' capability (`capabilities/pets.json`) allows
+    exactly `grokbot://` and `grokbot://app/v1/agent?id=<uuid>` and no other URL; a Rust test
+    checks that pattern with the plugin's own matcher. The main window opens no links.
+  - Before opening, the app asks macOS whether any app handles `grokbot:` links. If Grok Bot
+    isn't installed, a click does nothing, and the log gets one line saying so.
+  - Clicks used to open a web link (`openUrls`, default `https://grok.com`); that setting is
+    gone and old saved values are cleared.
 
 ### Keychain
 

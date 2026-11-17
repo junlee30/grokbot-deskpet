@@ -1,6 +1,6 @@
 ---
 name: desk-pet
-description: Show this Grok Bot as a pixel-art pet on the user's desktop, drawn as its own Grok Bot profile picture (avatarShape/avatarColor). Use when the user says "Install the Desk Pet skill and pair with code dp2.…" to pair once (private, end-to-end encrypted mailbox), and during every turn to post short lifecycle status (thinking, working, juggling, needs_you, done, error). Old v1 codes like "K7Q-42M" are deprecated: tell the user to make a new code in Desk Pet (⚙ → Pair). Never sends prompts, replies, tool arguments, file contents or secrets.
+description: Show this Grok Bot as a pixel-art pet on the user's desktop, drawn as its own Grok Bot profile picture (avatarShape/avatarColor); clicking the pet opens this bot's chat in the Grok Bot app. Use when the user says "Install the Desk Pet skill and pair with code dp2.…" to pair once (private, end-to-end encrypted mailbox), and during every turn to post short lifecycle status (thinking, working, juggling, needs_you, done, error). Old v1 codes like "K7Q-42M" are deprecated: tell the user to make a new code in Desk Pet (⚙ → Pair). Never sends prompts, replies, tool arguments, file contents or secrets.
 ---
 
 # Desk Pet
@@ -8,7 +8,8 @@ description: Show this Grok Bot as a pixel-art pet on the user's desktop, drawn 
 The user runs a small desktop app ("Desk Pet for Grok Bot", unofficial, working title) that
 shows one pixel-art pet per Grok Bot and animates it from status updates. Each pet looks like
 that bot's own Grok Bot profile picture (its avatar shape in its avatar colour) when the bot
-sends its `avatar`; otherwise it is a generic robot. You can't reach the user's machine, and
+sends its `avatar`; otherwise it is a generic robot. Clicking a pet opens the Grok Bot desktop
+app on that bot's chat, when the bot sends its own Grok Bot id (`grokbot_id`, section 2). You can't reach the user's machine, and
 it can't reach you, so status goes through a **private mailbox** both sides can reach over
 HTTPS. Pairing codes look like `dp2.` followed by about 71 letters, digits, `-` and `_`. You
 encrypt each status with a key from the code and post it to a random topic on
@@ -55,23 +56,52 @@ in a file other than the one below, in memory notes, in chat, or on a process co
 4. Say hello, so the pet appears right away:
 
    ```bash
-   ~/.deskpet/deskpet-publish jarvis Jarvis idle paired "Paired" --avatar blob/black >/dev/null 2>&1 || true
+   ~/.deskpet/deskpet-publish jarvis Jarvis idle paired "Paired" \
+     --avatar blob/black --grokbot-id 2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4e5f >/dev/null 2>&1 || true
    ```
 
-   (`--avatar`: see section 2; leave it out if you have none.)
+   (`--avatar` and `--grokbot-id`: see section 2, and use your own values; leave either out if
+   you don't have it.)
 5. Confirm to the user **without echoing the code**, e.g.
    "Paired with Desk Pet. I'll show up on your desktop as Jarvis."
 
 `~/.deskpet/deskpet-publish status` prints `paired (mailbox <host>)` or `not paired`.
 
-## 2. Your avatar (profile picture)
+## 2. Your avatar (profile picture) and your Grok Bot id
 
-Your Grok Bot profile (`profile.json`) has `avatarShape` and `avatarColor`. Read them once per
-session and send them with every status post, so the pet looks like you. Send the names exactly
-as in your profile (lowercase), for example:
+Your Grok Bot profile is `/home/box/agent-data/agents/<uuid>/profile.json`. Two things come
+from it; read them once per session and send them with **every** status post.
+
+### Your Grok Bot id (`grokbot_id`): makes a click open your chat
+
+The `<uuid>` folder that holds **your own** `profile.json` is your Grok Bot agent id, e.g.
+`2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4e5f`. When you send it, clicking your pet opens the Grok Bot
+desktop app on your chat (`grokbot://app/v1/agent?id=<uuid>`). Without it, a click only brings
+Grok Bot to the front.
 
 ```bash
-# PROFILE = path to your own profile.json
+# PROFILE = path to your own profile.json (/home/box/agent-data/agents/<uuid>/profile.json)
+DESK_PET_GROKBOT_ID="$(basename "$(dirname "$PROFILE")" \
+  | grep -ixE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' || true)"
+export DESK_PET_GROKBOT_ID
+```
+
+- Use **your own** folder, the one whose `profile.json` is yours (the same file you take your
+  avatar from). Other bots on this computer have their own folders next to it; never send
+  theirs, or a click on your pet would open another bot's chat. If you can't tell which folder
+  is yours, send no id.
+- `deskpet-publish` reads `DESK_PET_GROKBOT_ID` from the environment, or takes
+  `--grokbot-id <uuid>`. It must be a UUID (it is lowercased); anything else is dropped and
+  the status is sent without it. The desktop app checks it again.
+- It is not a secret and not personal data, only the id of your bot. Never send the user's
+  id, a session or chat id, or a URL here.
+
+### Your avatar
+
+`profile.json` has `avatarShape` and `avatarColor`, so the pet looks like you. Send the names
+exactly as in your profile (lowercase), for example:
+
+```bash
 DESK_PET_AVATAR="$(jq -c '{shape: .avatarShape, color: .avatarColor}
   | select((.shape|type)=="string" and (.color|type)=="string")
   | {shape: (.shape|ascii_downcase), color: (.color|ascii_downcase)}' "$PROFILE" 2>/dev/null || true)"
@@ -127,6 +157,7 @@ desk_pet() {  # usage: desk_pet <state> <event> [message]
   # Private mailbox (end-to-end encrypted; fails open, ~3 s max, prints nothing).
   [ -x "$HOME/.deskpet/deskpet-publish" ] && [ -f "$HOME/.deskpet/pairing" ] || return 0
   DESK_PET_SESSION="${DESK_PET_SESSION:-default}" DESK_PET_AVATAR="${DESK_PET_AVATAR:-}" \
+  DESK_PET_GROKBOT_ID="${DESK_PET_GROKBOT_ID:-}" \
     "$HOME/.deskpet/deskpet-publish" jarvis Jarvis "$@" >/dev/null 2>&1 || true
   return 0
 }
@@ -137,7 +168,15 @@ desk_pet needs_you waiting "Need your approval to continue"
 desk_pet done turn_end
 ```
 
-Replace `jarvis` / `Jarvis` with your own `agent_id` and `agent_name`.
+Replace `jarvis` / `Jarvis` with your own `agent_id` and `agent_name`, and set
+`DESK_PET_AVATAR` and `DESK_PET_GROKBOT_ID` from your own profile first (section 2). The same
+call with options instead of the environment:
+
+```bash
+~/.deskpet/deskpet-publish jarvis Jarvis working tool_start "Running the test suite" \
+  --session "$DESK_PET_SESSION" --avatar blob/black \
+  --grokbot-id 2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4e5f >/dev/null 2>&1 || true
+```
 
 Rules for this call:
 
@@ -149,7 +188,8 @@ Rules for this call:
   prints it and passes nothing secret on a command line.
 - **Never run with `set -x`** (or any shell tracing or verbose curl, `-v`).
 - What gets sent, inside the encryption: `agent_id`, `agent_name`, `session`, `state`,
-  `event`, `message` (optional), `ts` (ISO-8601), `avatar` (optional) and `seq` (added by
+  `event`, `message` (optional), `ts` (ISO-8601), `avatar` (optional), `grokbot_id`
+  (optional, your Grok Bot agent UUID) and `seq` (added by
   `deskpet-publish`; it rises with every post so the pet can drop replays).
 
 ## 5. The `message` field: privacy rules
