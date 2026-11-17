@@ -31,6 +31,14 @@
 
 Desk Pet runs on macOS (Apple silicon and Intel). Pick one:
 
+**Ask your Grok Bot.** Paste this to it:
+
+```text
+Install Desk Pet on my Mac by following https://raw.githubusercontent.com/junlee30/grokbot-deskpet/main/docs/BOT-INSTALL.md
+```
+
+It installs and opens Desk Pet (with Homebrew if you have it, otherwise the release checked against its SHA-256), then asks you for the line from **Connect your Grok Bot**. If your bot can't run commands on your Mac, it tells you which of the options below to use.
+
 **Homebrew** ([brew.sh](https://brew.sh)), easiest to keep up to date with `brew upgrade --cask desk-pet`:
 
 ```bash

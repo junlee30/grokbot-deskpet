@@ -141,7 +141,9 @@ never contain it.
 trusts the tap). The workflow needs the `HOMEBREW_TAP_TOKEN` secret: a fine-grained token
 with **Contents: read and write** on `junlee30/homebrew-tap` only. Without it the workflow
 prints the version and SHA-256 to put in the cask by hand. Homebrew's own cask list won't
-take unsigned apps, so the cask lives in our tap.
+take unsigned apps, so the cask lives in our tap. [docs/BOT-INSTALL.md](BOT-INSTALL.md) (what
+the README's "Ask your Grok Bot" prompt points at) reads the version and SHA-256 from that
+cask when Homebrew isn't installed, so keep the cask's `version`/`sha256` lines in that form.
 
 **npm.** `deskpet-publish` is published by `.github/workflows/npm.yml` through npm trusted
 publishing (OIDC), so no npm token is stored: on npmjs.com, the package → **Settings →

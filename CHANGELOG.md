@@ -5,6 +5,9 @@ The bot skill has its own versions (`skill-v…` tags); the skill version each a
 
 ## Unreleased
 
+- **Ask your Grok Bot to install it:** paste one line from the README; the bot follows
+  [docs/BOT-INSTALL.md](docs/BOT-INSTALL.md), installs and opens Desk Pet, then asks for the
+  pairing line.
 - **Homebrew:** `brew install --cask junlee30/tap/desk-pet`. The cask follows each published
   release.
 - **npm:** the bot publisher is on npm as `deskpet-publish` (same file the skill pins by

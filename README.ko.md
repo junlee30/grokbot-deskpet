@@ -31,6 +31,14 @@
 
 Desk Pet은 macOS(Apple 실리콘, Intel)에서 돌아가요. 편한 방법을 골라 주세요:
 
+**Grok Bot에게 맡기기.** 이 줄을 붙여 넣으세요:
+
+```text
+https://raw.githubusercontent.com/junlee30/grokbot-deskpet/main/docs/BOT-INSTALL.md 을 따라서 내 Mac에 Desk Pet을 설치해 줘
+```
+
+봇이 Desk Pet을 설치하고 열어 줘요(Homebrew가 있으면 Homebrew로, 없으면 SHA-256으로 확인한 릴리스로). 그다음 **Grok Bot 연결하기**에서 복사한 줄을 달라고 해요. 봇이 내 Mac에서 명령을 실행할 수 없으면 아래 방법 중 무엇을 쓰면 되는지 알려 줘요.
+
 **Homebrew** ([brew.sh](https://brew.sh)). `brew upgrade --cask desk-pet`으로 업데이트하기 가장 쉬워요:
 
 ```bash
