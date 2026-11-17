@@ -177,7 +177,7 @@ When in doubt, omit `message`.
 
 - The user can unpair or make a new code in the desktop app. The old code then stops working
   silently: your posts still succeed but nobody reads them. There is no error to watch for, so
-  when the user gives you a new `dp2.` code, pair again (step 3 of section 1); it replaces the
+  when the user gives you a new `dp2.` code, pair again (step 2 of section 1); it replaces the
   old one for all bots on this computer.
 - To unpair from your side (only if the user asks): `~/.deskpet/deskpet-publish unpair`.
 - What the mailbox (ntfy.sh, or the user's own ntfy server) sees: the random topic name, the
