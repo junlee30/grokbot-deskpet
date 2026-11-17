@@ -49,6 +49,24 @@ export async function setWindowVisible(visible: boolean): Promise<void> {
   await (visible ? w.show() : w.hide());
 }
 
+/** Resize this window (logical px; no-op if it already has that size). */
+export async function setWindowSize(width: number, height: number): Promise<void> {
+  if (!inTauri) return;
+  const { getCurrentWindow, LogicalSize } = await import("@tauri-apps/api/window");
+  const w = getCurrentWindow();
+  const [inner, scale] = await Promise.all([w.innerSize(), w.scaleFactor()]);
+  const cur = inner.toLogical(scale);
+  if (Math.round(cur.width) === width && Math.round(cur.height) === height) return;
+  await w.setSize(new LogicalSize(width, height));
+}
+
+/** The app version ("" in the web prototype). */
+export async function appVersion(): Promise<string> {
+  if (!inTauri) return "";
+  const { getVersion } = await import("@tauri-apps/api/app");
+  return getVersion();
+}
+
 /** Tell every window (the pets) that the saved settings changed. */
 export async function broadcast(event: string, payload: unknown = null): Promise<void> {
   if (!inTauri) return;

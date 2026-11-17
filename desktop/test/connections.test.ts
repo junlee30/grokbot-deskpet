@@ -2,21 +2,22 @@
 // validation, and dropping what older versions saved for v1.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { bootView, looksLikeDp2, migrateSettings, OLD_V1_KEYS, pasteLineV2, statusLine } from "../src/connections.ts";
+import { bootView, looksLikeDp2, migrateSettings, OLD_V1_KEYS, pasteLineV2, headerStatus } from "../src/connections.ts";
 import { DEFAULT_MAILBOX, validateMailboxUrl } from "../src/net.ts";
 
-describe("statusLine", () => {
-  it("quiet when not paired or online", () => {
-    assert.deepEqual(statusLine(null), { status: "online", text: "" });
-    assert.deepEqual(statusLine({ status: "online" }), { status: "online", text: "" });
+describe("headerStatus", () => {
+  it("not paired, whatever the connection says", () => {
+    assert.deepEqual(headerStatus({ paired: false, conn: { status: "online" }, host: "ntfy.sh" }), { tone: "none", text: "Not paired" });
   });
-  it("names connecting and offline", () => {
-    assert.deepEqual(statusLine({ status: "connecting" }), { status: "connecting", text: "connecting…" });
-    assert.deepEqual(statusLine({ status: "offline", detail: "mailbox unreachable" }), {
-      status: "offline",
-      text: "offline · mailbox unreachable",
+  it("connecting (also before the first status), connected, offline", () => {
+    assert.deepEqual(headerStatus({ paired: true, conn: null, host: "ntfy.sh" }), { tone: "connecting", text: "Connecting… · ntfy.sh" });
+    assert.deepEqual(headerStatus({ paired: true, conn: { status: "connecting" }, host: "" }), { tone: "connecting", text: "Connecting…" });
+    assert.deepEqual(headerStatus({ paired: true, conn: { status: "online" }, host: "ntfy.sh" }), { tone: "online", text: "Connected · ntfy.sh" });
+    assert.deepEqual(headerStatus({ paired: true, conn: { status: "offline", detail: "mailbox unreachable" }, host: "ntfy.sh" }), {
+      tone: "offline",
+      text: "Offline · mailbox unreachable",
     });
-    assert.deepEqual(statusLine({ status: "offline" }), { status: "offline", text: "offline · retrying" });
+    assert.deepEqual(headerStatus({ paired: true, conn: { status: "offline" }, host: "ntfy.sh" }), { tone: "offline", text: "Offline · retrying" });
   });
 });
 

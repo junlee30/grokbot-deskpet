@@ -1,12 +1,85 @@
+/* Desk Pet UI. Research and the reasons behind these choices: .runs/ui-research.md (not in git)
+   and the README's "Look and feel" section.
+   - Spacing on a 4/8 pt grid; radii 6 (inputs, chips) · 10 (buttons, bubbles) · 12 (panel, cards).
+   - System font (SF Pro) for UI text; rounded for the pets' own voice (name tags, bubbles).
+   - Light and dark via prefers-color-scheme; all colours are the variables below. */
+
 :root {
-  --ink: #f2f4f8;
-  --muted: #a9b1c1;
-  --glass: rgba(20, 22, 28, 0.86);
-  --edge: rgba(255, 255, 255, 0.14);
-  --teal: #2dd4bf;
-  font-family: ui-rounded, -apple-system, BlinkMacSystemFont, "SF Pro Rounded", system-ui, sans-serif;
-  font-size: 12px;
-  color: var(--ink);
+  color-scheme: light dark;
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --font-pet: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Brand: the desk in the app icon. Dark text on it is 7.2:1. */
+  --brand: #ff8a3d;
+  --brand-hover: #ff9a55;
+  --on-brand: #1c1006;
+
+  /* Light appearance */
+  --text: #1d1d1f;
+  --text-2: rgba(60, 60, 67, 0.78);
+  --text-3: rgba(60, 60, 67, 0.56);
+  --sep: rgba(0, 0, 0, 0.1);
+  --fill: rgba(0, 0, 0, 0.05);
+  --fill-2: rgba(0, 0, 0, 0.09);
+  --group: rgba(255, 255, 255, 0.62);
+  --panel: rgba(246, 246, 248, 0.86); /* web preview only; the app uses real vibrancy */
+  --panel-edge: rgba(0, 0, 0, 0.12);
+  --danger: #d70015;
+  --ok: #248a3d;
+  --focus: rgba(255, 138, 61, 0.55);
+
+  /* Pet windows sit on the desktop: bubbles are solid and lifted by a soft shadow. */
+  --bubble: rgba(255, 255, 255, 0.97);
+  --bubble-text: #1d1d1f;
+  --bubble-edge: rgba(0, 0, 0, 0.08);
+  --bubble-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 4px 14px rgba(0, 0, 0, 0.14);
+  --tag: rgba(255, 255, 255, 0.94);
+  --tag-text: #1d1d1f;
+  --needs: #c77c00;
+  --error: #d70015;
+  --working: #0a84ff;
+
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.38;
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #f5f5f7;
+    --text-2: rgba(235, 235, 245, 0.74);
+    --text-3: rgba(235, 235, 245, 0.5);
+    --sep: rgba(255, 255, 255, 0.12);
+    --fill: rgba(255, 255, 255, 0.07);
+    --fill-2: rgba(255, 255, 255, 0.12);
+    --group: rgba(255, 255, 255, 0.05);
+    --panel: rgba(36, 36, 40, 0.88);
+    --panel-edge: rgba(255, 255, 255, 0.14);
+    --danger: #ff6961;
+    --ok: #30d158;
+
+    --bubble: rgba(44, 44, 48, 0.97);
+    --bubble-text: #f5f5f7;
+    --bubble-edge: rgba(255, 255, 255, 0.1);
+    --bubble-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 16px rgba(0, 0, 0, 0.36);
+    --tag: rgba(44, 44, 48, 0.94);
+    --tag-text: #f5f5f7;
+    --needs: #ffb340;
+    --error: #ff6961;
+    --working: #64d2ff;
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --sep: rgba(127, 127, 127, 0.55);
+    --bubble-edge: rgba(127, 127, 127, 0.7);
+    --panel-edge: rgba(127, 127, 127, 0.7);
+    --text-2: var(--text);
+  }
 }
 
 html,
@@ -22,16 +95,6 @@ body {
   cursor: default;
 }
 
-/* In a normal browser tab (web prototype) give the transparent window a desk to sit on. */
-#app.web {
-  width: 360px;
-  height: 200px;
-  margin: 24px;
-  border-radius: 12px;
-  background: repeating-conic-gradient(#d9dce3 0 25%, #c9cdd6 0 50%) 0 0 / 16px 16px;
-  outline: 1px dashed #8a90a0;
-}
-
 #app {
   position: relative;
   width: 100vw;
@@ -39,12 +102,460 @@ body {
   box-sizing: border-box;
 }
 
+/* In a normal browser tab (web prototype) give the transparent window a desk to sit on. */
+#app.web {
+  width: 360px;
+  height: auto;
+  min-height: 120px;
+  margin: 24px;
+  border-radius: 14px;
+  background: repeating-conic-gradient(#d9dce3 0 25%, #c9cdd6 0 50%) 0 0 / 16px 16px;
+}
+
 canvas {
   image-rendering: pixelated;
   image-rendering: crisp-edges;
 }
 
-/* Each bot has its own window (pet.html); its pet is placed in it by src/layout.ts. */
+[hidden] {
+  display: none !important;
+}
+
+/* ===================================================================== control window (index.html)
+   One panel filling the window. In the app the window itself has macOS vibrancy (tauri.conf.json
+   windowEffects: popover) and the panel only adds a hairline; main.ts sizes the window to it. */
+
+.panel {
+  box-sizing: border-box;
+  width: 100%;
+  border-radius: 12px;
+  border: 0.5px solid var(--panel-edge);
+  background: var(--panel);
+  -webkit-backdrop-filter: blur(24px) saturate(1.6);
+  backdrop-filter: blur(24px) saturate(1.6);
+  overflow: hidden;
+}
+
+#app.vibrant .panel {
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .panel {
+    background: var(--panel);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 16px 12px;
+}
+
+.head .mark {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  pointer-events: none;
+}
+
+.head .titles {
+  min-width: 0;
+  flex: 1;
+  pointer-events: none;
+}
+
+.head h1 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.head .status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--text-3);
+}
+.dot[data-s="online"] {
+  background: var(--ok);
+}
+.dot[data-s="connecting"] {
+  background: var(--needs);
+}
+.dot[data-s="offline"] {
+  background: var(--danger);
+}
+
+.view {
+  padding: 0 16px 16px;
+}
+
+.view h2 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.view p {
+  margin: 0;
+}
+
+.sub {
+  color: var(--text-2);
+}
+
+.meta {
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.meta svg {
+  width: 11px;
+  height: 11px;
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+
+.meta.error,
+.note.error {
+  color: var(--danger);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.actions .spacer {
+  flex: 1;
+}
+
+/* ---- buttons ---- */
+button {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  padding: 4px 12px;
+  border-radius: 8px;
+  border: 0.5px solid var(--sep);
+  background: var(--fill);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background-color 120ms,
+    color 120ms,
+    filter 120ms;
+}
+
+button:hover {
+  background: var(--fill-2);
+}
+
+button:active {
+  filter: brightness(0.94);
+}
+
+button:focus-visible,
+input:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 1px;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button.primary {
+  background: var(--brand);
+  border-color: transparent;
+  color: var(--on-brand);
+  font-weight: 600;
+}
+
+button.primary:hover {
+  background: var(--brand-hover);
+}
+
+button.big {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 10px;
+}
+
+button.plain {
+  background: none;
+  border-color: transparent;
+  color: var(--text-2);
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+button.plain:hover {
+  color: var(--text);
+  background: none;
+}
+
+button.danger {
+  color: var(--danger);
+}
+
+button.small {
+  font-size: 12px;
+  line-height: 16px;
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+button.ok {
+  color: var(--ok);
+}
+
+/* An icon in front of a button's label (the ✓ in "Copied"). */
+button > svg {
+  width: 14px;
+  height: 14px;
+  margin-right: 4px;
+  vertical-align: -2px;
+}
+
+.icon-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: none;
+  border-color: transparent;
+  color: var(--text-2);
+  flex: none;
+}
+
+.icon-btn:hover,
+.icon-btn[aria-pressed="true"] {
+  background: var(--fill-2);
+  color: var(--text);
+}
+
+.icon-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ---- pair-start ---- */
+.hello h2 {
+  font-size: 15px;
+}
+
+/* ---- pair-code: the code card ---- */
+.code-card {
+  position: relative;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--group);
+  border: 0.5px solid var(--sep);
+  transition:
+    background-color 200ms,
+    border-color 200ms;
+}
+
+.code-card.copied {
+  border-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 10%, var(--group));
+}
+
+.paste {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  max-height: 64px; /* 4 lines; the rest scrolls */
+  overflow: auto;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+/* ---- waiting: the empty state ---- */
+.empty {
+  text-align: center;
+  padding-top: 4px;
+}
+
+.empty .pup {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 8px;
+  display: block;
+  animation: deskpet-breathe 3.2s ease-in-out infinite;
+  transform-origin: 50% 90%;
+}
+
+.empty .sub {
+  margin: 0 8px 12px;
+}
+
+@keyframes deskpet-breathe {
+  0%,
+  100% {
+    transform: translateY(0) scale(1, 1);
+  }
+  50% {
+    transform: translateY(-2px) scale(1.015, 0.985);
+  }
+}
+
+/* ---- settings ---- */
+.group {
+  border-radius: 10px;
+  background: var(--group);
+  border: 0.5px solid var(--sep);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 4px;
+  padding: 8px 12px;
+  min-height: 28px;
+}
+
+.row + .row {
+  border-top: 0.5px solid var(--sep);
+}
+
+.row > .label {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.row .value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.row .note {
+  grid-column: 2;
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.row .note:empty {
+  display: none;
+}
+
+.row input[type="text"],
+.row input:not([type]) {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--fill);
+  border: 0.5px solid var(--sep);
+  border-radius: 6px;
+  padding: 4px 8px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.state-line {
+  flex-basis: 100%;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+/* Segmented control (Pet size). */
+.seg {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--fill-2);
+}
+
+.seg label {
+  position: relative;
+}
+
+.seg input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.seg span {
+  display: block;
+  padding: 2px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.seg input:checked + span {
+  background: var(--bubble);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
+}
+
+.seg input:focus-visible + span {
+  outline: 3px solid var(--focus);
+}
+
+.foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.foot .spacer {
+  flex: 1;
+}
+
+.version {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+/* ===================================================================== pet windows (pet.html) */
+
 .stage {
   position: absolute;
   inset: 0;
@@ -59,30 +570,41 @@ canvas {
   cursor: pointer;
 }
 
-.pet[hidden] {
-  display: none;
-}
-
 .pet canvas {
   width: 96px;
   height: 96px;
   display: block;
-  transition: filter 300ms, opacity 300ms;
+  transition:
+    filter 300ms,
+    opacity 300ms,
+    translate 160ms ease-out;
 }
 
+/* Hover: the pet perks up a little (a click opens its chat in Grok Bot). */
+.pet:hover canvas {
+  translate: 0 -2px;
+}
+
+/* Name tag: a small rounded pill with the bot's colour as a dot. Height = LABEL_H (16) in layout.ts. */
 .pet .name {
   margin-top: -2px;
-  padding: 1px 7px;
-  border-radius: 8px;
-  background: var(--glass);
-  border: 1px solid var(--edge);
+  padding: 1px 8px 1px 6px;
+  border-radius: 999px;
+  background: var(--tag);
+  color: var(--tag-text);
+  box-shadow:
+    0 0 0 0.5px var(--bubble-edge),
+    0 1px 3px rgba(0, 0, 0, 0.18);
+  font-family: var(--font-pet);
   font-size: 11px;
+  line-height: 14px;
   font-weight: 600;
   max-width: 100px;
   box-sizing: border-box;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  transition: box-shadow 160ms;
 }
 
 .pet .name::before {
@@ -90,43 +612,81 @@ canvas {
   display: inline-block;
   width: 6px;
   height: 6px;
-  margin-right: 5px;
-  border-radius: 1px;
+  margin-right: 4px;
+  border-radius: 50%;
   background: var(--accent);
+  box-shadow: 0 0 0 0.5px rgba(127, 127, 127, 0.5);
   vertical-align: 1px;
 }
 
+.pet:hover .name {
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 2px 6px rgba(0, 0, 0, 0.22);
+}
+
 .pet[data-state="needs_you"] .name {
-  border-color: #ffc83d;
+  box-shadow:
+    0 0 0 1.5px var(--needs),
+    0 1px 3px rgba(0, 0, 0, 0.18);
 }
 .pet[data-state="error"] .name {
-  border-color: #ff4d4d;
+  box-shadow:
+    0 0 0 1.5px var(--error),
+    0 1px 3px rgba(0, 0, 0, 0.18);
 }
 
 /* Toast: positioned by layoutToast() inside its pet's column, max 2 lines, ellipsis. The
-   numbers here must match TOAST_* in src/layout.ts. */
+   numbers here must match TOAST_* in src/layout.ts (line 16, padding 6/10, border 1). The tail
+   points at the pet (--tail-x, set by pets.ts) and hangs TOAST_TAIL px below the box. */
 .bubble {
   position: absolute;
   left: 0;
   top: 0;
   box-sizing: border-box;
   width: max-content;
-  max-width: 150px;
-  padding: 4px 7px;
-  border-radius: 8px;
-  background: var(--glass);
-  border: 1px solid var(--accent, var(--edge));
-  font-size: 11px;
-  line-height: 14px;
-  max-height: 38px;
-  overflow: hidden;
+  max-width: 172px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  background: var(--bubble);
+  color: var(--bubble-text);
+  border: 1px solid var(--bubble-edge);
+  box-shadow: var(--bubble-shadow);
+  font-family: var(--font-pet);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  max-height: 46px;
   opacity: 0;
   translate: 0 4px;
   pointer-events: none;
   transition:
-    opacity 160ms,
-    translate 160ms;
+    opacity 140ms ease-in,
+    translate 140ms ease-in;
   z-index: 3;
+}
+
+.bubble.show {
+  opacity: 1;
+  translate: 0 0;
+  transition:
+    opacity 180ms ease-out,
+    translate 180ms ease-out;
+}
+
+/* The tail: a small rotated square under the box, pointing down at the pet. */
+.bubble::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--tail-x, 50%) - 5px);
+  bottom: -5px;
+  width: 9px;
+  height: 9px;
+  background: var(--bubble);
+  border-right: 1px solid var(--bubble-edge);
+  border-bottom: 1px solid var(--bubble-edge);
+  border-bottom-right-radius: 2px;
+  rotate: 45deg;
 }
 
 /* The text is clamped in its own box so a 3rd line can't peek into the bubble's padding. */
@@ -135,46 +695,59 @@ canvas {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   line-clamp: 2;
-  max-height: 28px;
+  max-height: 32px;
   overflow: hidden;
   text-overflow: ellipsis;
   overflow-wrap: anywhere;
 }
 
-.bubble.show {
-  opacity: 1;
-  translate: 0 0;
+/* A state that wants you: a coloured edge on the bubble too. */
+.bubble[data-tone="needs_you"] {
+  border-color: var(--needs);
+}
+.bubble[data-tone="needs_you"]::after {
+  border-color: var(--needs);
+}
+.bubble[data-tone="error"] {
+  border-color: var(--error);
+}
+.bubble[data-tone="error"]::after {
+  border-color: var(--error);
 }
 
-/* Persistent working label (src/presence.ts): up to 2 short lines with ellipsis (one line when the
-   column is wide), a small spinning ring in front. Max height = 2 * 13px + 2 * 3px padding + 2px
-   border = 34px, sitting right above the sprite (LABEL_OVERLAP_PX in layout.ts). */
+/* Persistent working label (src/presence.ts): a status pill, not speech, so no tail. Up to 2
+   short lines with ellipsis, a small spinning ring in front. Max height = 2 * 15 + 2 * 5 + 2 =
+   42 px (<= TOAST_MAX_H), sitting right above the sprite (LABEL_OVERLAP_PX in layout.ts). */
 .bubble.sticky {
-  padding: 3px 7px 3px 6px;
-  font-size: 10.5px;
-  line-height: 13px;
-  max-height: 34px;
+  padding: 5px 10px 5px 8px;
+  font-size: 11.5px;
+  line-height: 15px;
+  max-height: 42px;
   font-weight: 600;
-  background: rgba(16, 24, 32, 0.9);
-  border-color: #22d3ee;
+  border-radius: 10px;
+}
+
+.bubble.sticky::after {
+  display: none;
 }
 
 .bubble.sticky .text {
-  max-height: 26px;
+  max-height: 30px;
 }
 
 .bubble.sticky .text::before {
   content: "";
   display: inline-block;
   box-sizing: border-box;
-  width: 8px;
-  height: 8px;
-  margin-right: 5px;
+  width: 9px;
+  height: 9px;
+  margin-right: 6px;
   vertical-align: -0.5px;
   border-radius: 50%;
-  border: 2px solid rgba(34, 211, 238, 0.3);
-  border-top-color: #22d3ee;
-  animation: deskpet-spin 0.8s linear infinite;
+  border: 2px solid color-mix(in srgb, var(--working) 28%, transparent);
+  border-top-color: var(--working);
+  animation: deskpet-spin 0.9s linear infinite;
+  will-change: transform; /* its own layer: spinning doesn't repaint the shadowed bubble */
 }
 
 @keyframes deskpet-spin {
@@ -184,260 +757,76 @@ canvas {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .bubble,
+  .bubble.show {
+    translate: none;
+    transition: opacity 120ms linear;
+  }
   .bubble.sticky .text::before {
     animation: none;
+    border-color: var(--working);
+    border-top-color: var(--working);
+    border-width: 0;
+    background: var(--working);
+    width: 7px;
+    height: 7px;
+  }
+  .pet:hover canvas {
+    translate: none;
+  }
+  .pet canvas {
+    transition: none;
+  }
+  .empty .pup {
+    animation: none;
+  }
+  button,
+  .code-card {
+    transition: none;
   }
 }
 
 /* Mailbox unreachable: pets dim (and use the offline sprite) until the stream is back. */
-#app.offline .pet canvas {
+.offline .pet canvas {
   opacity: 0.55;
   filter: grayscale(0.6);
 }
-#app.offline .pet .name {
+.offline .pet .name {
   opacity: 0.7;
 }
 
-.hint,
-.status {
-  position: absolute;
-  left: 8px;
-  font-size: 10px;
-  color: var(--ink);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
-  pointer-events: none;
-}
-
-.hint {
-  top: 50%;
-  right: 8px;
-  text-align: center;
-  font-size: 12px;
-}
-
-.status {
-  top: 6px;
-}
-
+/* A bot's own window: a small settings button in the free corner beside the pet, on hover. */
 .gear {
   position: absolute;
-  top: 4px;
+  bottom: 6px;
   right: 4px;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   padding: 0;
-  border-radius: 6px;
-  border: 1px solid var(--edge);
-  background: var(--glass);
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 0;
+  background: var(--tag);
+  color: var(--text-2);
+  box-shadow:
+    0 0 0 0.5px var(--bubble-edge),
+    0 1px 3px rgba(0, 0, 0, 0.18);
   opacity: 0;
   transition: opacity 150ms;
   z-index: 5;
 }
 
-#app:hover .gear,
-#app[data-view="pair-start"] .gear {
+.gear svg {
+  width: 12px;
+  height: 12px;
+}
+
+.gear:hover {
+  color: var(--text);
+  background: var(--tag);
+}
+
+#app[data-kind="pet"]:hover .gear {
   opacity: 1;
 }
-
-/* A bot's own window: a small ⚙ in the free corner beside the pet (the toast is above it). */
-#app[data-kind="pet"] .gear {
-  top: auto;
-  bottom: 6px;
-  right: 4px;
-  width: 18px;
-  height: 18px;
-  font-size: 11px;
-  border-radius: 5px;
-}
-
-.card {
-  position: absolute;
-  left: 8px;
-  right: 8px;
-  bottom: 8px;
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: var(--glass);
-  border: 1px solid var(--edge);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
-  z-index: 4;
-}
-
-.card[hidden],
-.stage[hidden],
-.hint[hidden] {
-  display: none;
-}
-
-.card .mini {
-  width: 64px;
-  height: 64px;
-  flex: none;
-}
-
-.col {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  flex: 1;
-}
-
-.row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.small {
-  font-size: 10.5px;
-  color: var(--muted);
-}
-
-.paste {
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: 11px;
-  line-height: 1.35;
-  padding: 6px 8px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--edge);
-  user-select: text;
-  -webkit-user-select: text;
-  cursor: text;
-}
-
-button {
-  font: inherit;
-  font-size: 11.5px;
-  font-weight: 600;
-  padding: 5px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--edge);
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--ink);
-  cursor: pointer;
-}
-
-button:hover {
-  background: rgba(255, 255, 255, 0.14);
-}
-
-button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-button.primary {
-  background: var(--teal);
-  border-color: transparent;
-  color: #06201d;
-}
-
-button.primary:hover {
-  filter: brightness(1.08);
-}
-
-button.link {
-  background: none;
-  border: none;
-  color: var(--muted);
-  padding: 5px 4px;
-  margin-left: auto;
-}
-
-.settings {
-  top: 6px;
-  bottom: 6px;
-  padding: 8px 10px;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 4px;
-  overflow: auto;
-}
-
-.settings label {
-  display: grid;
-  grid-template-columns: 82px 1fr;
-  align-items: center;
-  gap: 6px;
-  font-size: 10.5px;
-  color: var(--muted);
-}
-
-.settings select {
-  justify-self: start;
-}
-
-.presets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  align-items: center;
-  padding-left: 88px;
-}
-
-.chip {
-  font-size: 10px;
-  padding: 2px 7px;
-  border-radius: 7px;
-}
-
-.small.error {
-  color: #ff7a7a;
-}
-
-.settings input,
-.settings select,
-.settings textarea {
-  font: inherit;
-  font-size: 11px;
-  color: var(--ink);
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid var(--edge);
-  border-radius: 6px;
-  padding: 3px 6px;
-  resize: none;
-  user-select: text;
-  -webkit-user-select: text;
-}
-
-/* v2: the dp2 code is one long word; let it wrap anywhere inside the paste box. */
-.paste {
-  overflow-wrap: anywhere;
-  word-break: break-all;
-}
-
-button.link + button.link {
-  margin-left: 0;
-}
-
-/* Settings: the pairing row with its actions. */
-.conn-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  align-items: center;
-  padding-left: 88px;
-  min-height: 20px;
-}
-
-.conn-row .small {
-  flex-basis: 100%;
-}
-
-/* The settings card scrolls; its rows must keep their height instead of shrinking into each other. */
-.settings > * {
-  flex-shrink: 0;
-}
-
-.settings label select {
-  max-width: 100%;
-}
-

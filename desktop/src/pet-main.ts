@@ -9,11 +9,16 @@ import { agentOfLabel, EventFeed, grokbotId, grokbotUrl } from "./petwin.ts";
 import { invokeCmd, onEvent, openExternal, startWindowDrag, windowLabel } from "./platform.ts";
 import { SpriteBank } from "./sprites.ts";
 import { AvatarBank } from "./avatar-bank.ts";
+import { GEAR_SVG } from "./icons.ts";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
+// Reduced motion: avatars hold their body still (the state still shows in its overlays).
+const calm = window.matchMedia("(prefers-reduced-motion: reduce)");
+Pet.reducedMotion = calm.matches;
+calm.addEventListener("change", () => (Pet.reducedMotion = calm.matches));
 app.innerHTML = `
   <div class="stage" id="stage"></div>
-  <button class="gear" id="gear" title="Settings (or right-click the pet)" aria-label="Settings">&#9881;</button>
+  <button class="gear" id="gear" title="Settings (or right-click the pet)" aria-label="Settings">${GEAR_SVG}</button>
 `;
 const stage = document.getElementById("stage") as HTMLDivElement;
 

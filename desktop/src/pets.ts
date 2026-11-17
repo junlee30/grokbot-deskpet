@@ -1,17 +1,19 @@
 // Pet model + view: one pet per agent_id. Which of its sessions count: sessions.ts.
 import type { DeskPetConfig } from "./config.ts";
-import { LABEL_OVERLAP_PX, layoutToast, toastMaxWidth, type Slot } from "./layout.ts";
+import { LABEL_OVERLAP_PX, layoutToast, tailX, toastMaxWidth, type Slot } from "./layout.ts";
 import { bubbleView, carryMessage, sameView, stickyLabel, type BubbleView } from "./presence.ts";
 import type { PetState, StateEvent } from "./events.ts";
 import { displayFor, eventOrder, type Session } from "./sessions.ts";
 import { accentFor, type AnimState, type SpriteBank } from "./sprites.ts";
-import { accentHex, AVATAR_DONE_MS, avatarCue, avatarGeometry, colorHex, FacePlayer, parseAvatar, type Avatar } from "./avatar.ts";
+import { accentHex, AVATAR_DONE_MS, avatarCue, calmCue, avatarGeometry, colorHex, FacePlayer, parseAvatar, type Avatar } from "./avatar.ts";
 import { drawAvatar, type AvatarBank } from "./avatar-bank.ts";
 import { samePixels } from "./petwin.ts";
 
 const MAX_SESSIONS = 16;
 
 export class Pet {
+  /** prefers-reduced-motion: avatars hold their body still (calmCue). Set by the window. */
+  static reducedMotion = false;
   readonly id: string;
   name: string;
   accent: string;
@@ -81,6 +83,7 @@ export class Pet {
     this.label = document.createElement("div");
     this.label.className = "name";
     this.label.textContent = name;
+    this.el.title = `Open ${name} in Grok Bot`;
     this.el.append(this.canvas, this.label);
   }
 
@@ -114,10 +117,13 @@ export class Pet {
     const winH = parent?.clientHeight || window.innerHeight;
     this.bubble.style.maxWidth = `${toastMaxWidth(s)}px`;
     const overlap = this.view.mode === "sticky" ? LABEL_OVERLAP_PX : undefined;
-    const box = layoutToast(s, this.bubble.offsetWidth, this.bubble.offsetHeight, winW, winH, overlap);
+    // Fractional size: offsetWidth rounds down, and a box 0.4 px too narrow wraps its last word.
+    const r = this.bubble.getBoundingClientRect();
+    const box = layoutToast(s, r.width + 0.5, r.height, winW, winH, overlap);
     this.bubble.style.left = `${box.left}px`;
     this.bubble.style.top = `${box.top}px`;
     this.bubble.style.width = `${box.width}px`;
+    this.bubble.style.setProperty("--tail-x", `${tailX(s, box)}px`);
   }
 
   remove(): void {
@@ -144,6 +150,7 @@ export class Pet {
     if (e.agent_name && e.agent_name !== this.name) {
       this.name = e.agent_name;
       this.label.textContent = e.agent_name;
+      this.el.title = `Open ${e.agent_name} in Grok Bot`;
     }
     const at = Math.min(now, Date.parse(e.received_at) || now);
     const fresh = now - at < 10_000;
@@ -173,6 +180,11 @@ export class Pet {
       ? bubbleView(this.toastMsg, stickyLabel(shown, this.shownSessions, now, staleMs), now)
       : { mode: "hidden" };
     if (this.toastMsg && now >= this.toastMsg.until) this.toastMsg = null;
+    const tone = shown === "needs_you" || shown === "error" ? shown : "";
+    if ((this.bubble.dataset.tone ?? "") !== tone) {
+      if (tone) this.bubble.dataset.tone = tone;
+      else delete this.bubble.dataset.tone;
+    }
     if (sameView(next, this.view)) return;
     this.view = next;
     this.bubble.classList.toggle("sticky", next.mode === "sticky");
@@ -238,7 +250,7 @@ export class Pet {
     }
     const t = now - this.anim.start;
     if (want === "done" && t >= AVATAR_DONE_MS) this.playedDoneSeq = this.doneSeq;
-    const cue = avatarCue(want, t, g);
+    const cue = Pet.reducedMotion ? calmCue(avatarCue(want, t, g)) : avatarCue(want, t, g);
     const face = this.face.frameAt(cue.face, now);
     const key = `avatar|${g.backing}|${g.res}|${av.shape}|${colorHex(av.color, art.palette)}|${face}|${JSON.stringify(cue)}`;
     this.paintIf(key, () => drawAvatar(this.paint, strip, g, face, cue));

@@ -29,7 +29,7 @@ use crate::pets::{self, agent_of, label_for, place_new, reset_layout, resize_anc
 /// Events kept per agent for a window that is still loading (and for a reloaded one).
 const BUFFER: usize = 32;
 /// Default pet window size (logical px): Large pets. The UI sets the real one at boot.
-const DEFAULT_SIZE: (i32, i32) = (184, 158);
+const DEFAULT_SIZE: (i32, i32) = (184, 166);
 
 pub struct Inner {
     store: Store,

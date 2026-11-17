@@ -2,73 +2,109 @@
 // bot has posted. Every bot is drawn in its own window (pet.html, src/pet-main.ts), opened and
 // placed by the Rust side; this window hides itself while only the pets are needed.
 import { loadConfig, saveSettings, v2State, type DeskPetConfig } from "./config.ts";
-import { bootView, pasteLineV2, statusLine, type Conn } from "./connections.ts";
+import { bootView, headerStatus, pasteLineV2, type Conn } from "./connections.ts";
 import type { ConnStatus, StateEvent } from "./events.ts";
-import { petWindowSize, type PetSize } from "./layout.ts";
+import { CHECK_SVG, GEAR_SVG, LOCK_SVG } from "./icons.ts";
+import { controlWindowSize, petWindowSize, type PetSize } from "./layout.ts";
 import { NoMailbox, TauriMailbox, type Mailbox, type MailboxHandlers } from "./mailbox.ts";
 import { DEFAULT_MAILBOX, validateMailboxUrl } from "./net.ts";
 import { mainWindowVisible } from "./petwin.ts";
-import { broadcast, copyText, inTauri, invokeCmd, onEvent, quitApp, setWindowVisible, startWindowDrag } from "./platform.ts";
-import { SpriteBank } from "./sprites.ts";
+import { appVersion, broadcast, copyText, inTauri, invokeCmd, onEvent, quitApp, setWindowSize, setWindowVisible, startWindowDrag } from "./platform.ts";
+import appIcon from "../icons-src/icon.svg?url";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
-  <div class="hint" id="hint" data-tauri-drag-region></div>
-  <div class="status" id="status"></div>
-  <button class="gear" id="gear" title="Settings" aria-label="Settings">&#9881;</button>
-
-  <section class="card" id="pair-start" hidden>
-    <canvas class="mini" id="mini" width="32" height="32"></canvas>
-    <div class="col">
-      <button class="primary" id="connect">Connect your Grok Bot</button>
-      <div class="small" id="pair-mode"></div>
-      <div class="small" id="pair-error"></div>
-    </div>
-  </section>
-
-  <section class="card" id="pair-code" hidden>
-    <div class="col">
-      <div class="small">Paste this to your Grok Bot:</div>
-      <div class="paste" id="paste-line"></div>
-      <div class="small" id="pair-note"></div>
-      <div class="row">
-        <button class="primary" id="copy">Copy</button>
-        <button class="link" id="done-pair">Done</button>
-        <button class="link" id="cancel-pair">Cancel</button>
+  <div class="panel" id="panel">
+    <header class="head" data-tauri-drag-region>
+      <img class="mark" src="${appIcon}" alt="" />
+      <div class="titles">
+        <h1>Desk Pet</h1>
+        <div class="status"><span class="dot" id="status-dot"></span><span id="status"></span></div>
       </div>
-    </div>
-  </section>
+      <button class="icon-btn" id="gear" title="Settings" aria-label="Settings" aria-pressed="false">${GEAR_SVG}</button>
+    </header>
 
-  <section class="card settings" id="settings" hidden>
-    <div class="conn-row"><span class="small" id="s-v2-state"></span>
-      <button type="button" class="chip" id="s-v2-code">Show code</button>
-      <button type="button" class="chip" id="s-v2-new">New code</button>
-      <button type="button" class="chip" id="s-v2-unpair">Unpair</button>
-    </div>
-    <label>Mailbox URL <input id="s-mailbox" spellcheck="false" autocomplete="off" /></label>
-    <div class="presets">
-      <button type="button" class="chip" id="s-ntfy" title="${DEFAULT_MAILBOX}">ntfy.sh</button>
-      <span class="small" id="s-mailbox-note">Used for the next new code.</span>
-    </div>
-    <label>Pet size <select id="s-size"><option value="large">Large</option><option value="small">Small</option></select></label>
-    <div class="presets">
-      <button type="button" class="chip" id="s-reset-pos">Reset pet positions</button>
-      <span class="small" id="s-reset-note">Each bot has its own window: drag it anywhere.</span>
-    </div>
-    <div class="row">
-      <button class="primary" id="s-save">Save</button>
-      <button id="s-quit">Quit</button>
-      <button class="link" id="s-close">Close</button>
-    </div>
-  </section>
+    <section class="view stack hello" id="pair-start" hidden>
+      <div>
+        <h2>Your Grok Bots, on your desk</h2>
+        <p class="sub">Each bot gets a little pet that shows what it's up to. Click a pet to open its chat.</p>
+      </div>
+      <button class="primary big" id="connect">Connect your Grok Bot</button>
+      <p class="meta" id="pair-mode"></p>
+      <p class="meta error" id="pair-error"></p>
+    </section>
+
+    <section class="view stack" id="pair-code" hidden>
+      <div>
+        <h2>Paste this to your Grok Bot</h2>
+        <p class="sub" id="pair-note"></p>
+      </div>
+      <div class="code-card" id="code-card"><div class="paste" id="paste-line"></div></div>
+      <div class="actions">
+        <button class="plain" id="cancel-pair">Cancel</button>
+        <span class="spacer"></span>
+        <button id="done-pair">Done</button>
+        <button class="primary" id="copy">Copy</button>
+      </div>
+    </section>
+
+    <section class="view empty" id="waiting" hidden>
+      <img class="pup" src="${appIcon}" alt="" />
+      <h2 id="w-title">Waiting for your first bot…</h2>
+      <p class="sub" id="w-sub"></p>
+      <button id="w-code" hidden>Show code</button>
+    </section>
+
+    <section class="view" id="settings" hidden>
+      <div class="group">
+        <div class="row">
+          <span class="label">Pairing</span>
+          <div class="value">
+            <span class="state-line" id="s-v2-state"></span>
+            <button type="button" class="small" id="s-v2-code">Show code</button>
+            <button type="button" class="small" id="s-v2-new">New code</button>
+            <button type="button" class="small danger" id="s-v2-unpair">Unpair</button>
+          </div>
+        </div>
+        <div class="row">
+          <label class="label" for="s-mailbox">Mailbox</label>
+          <div class="value">
+            <input id="s-mailbox" spellcheck="false" autocomplete="off" />
+            <button type="button" class="small" id="s-ntfy" title="${DEFAULT_MAILBOX}">ntfy.sh</button>
+          </div>
+          <div class="note" id="s-mailbox-note"></div>
+        </div>
+        <div class="row">
+          <span class="label">Pet size</span>
+          <div class="value">
+            <div class="seg" role="radiogroup" aria-label="Pet size">
+              <label><input type="radio" name="s-size" value="large" /><span>Large</span></label>
+              <label><input type="radio" name="s-size" value="small" /><span>Small</span></label>
+            </div>
+          </div>
+        </div>
+        <div class="row">
+          <span class="label">Positions</span>
+          <div class="value"><button type="button" class="small" id="s-reset-pos">Reset Pet Positions</button></div>
+          <div class="note" id="s-reset-note"></div>
+        </div>
+      </div>
+      <div class="foot">
+        <button class="plain" id="s-quit">Quit Desk Pet</button>
+        <span class="version" id="s-version"></span>
+        <span class="spacer"></span>
+        <button id="s-close">Cancel</button>
+        <button class="primary" id="s-save">Save</button>
+      </div>
+    </section>
+  </div>
 `;
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
-const hint = $<HTMLDivElement>("hint");
-const statusEl = $<HTMLDivElement>("status");
+const statusEl = $<HTMLSpanElement>("status");
+const panel = $<HTMLDivElement>("panel");
 
 let cfg: DeskPetConfig;
-const bank = new SpriteBank();
 /** Bots heard from on this pairing (each has its own window, opened by the Rust side). */
 const agents = new Set<string>();
 let mailbox: Mailbox; // the v2 private mailbox
@@ -79,30 +115,56 @@ let view: "pair-start" | "pair-code" | "pets" = "pair-start";
 let shownV2Code: string | null = null;
 let shownV2IsNew = false;
 
+const settingsOpen = () => !$("settings").hidden;
+
 function show(v: typeof view): void {
   view = v;
   if (v !== "pair-code") {
     shownV2Code = null; // the dp2 code is not kept around once the card is gone
     $("paste-line").textContent = "";
+    resetCopy();
   }
-  $("pair-start").hidden = v !== "pair-start";
-  $("pair-code").hidden = v !== "pair-code";
-  hint.hidden = v !== "pets";
   app.dataset.view = v;
   syncMain();
 }
 
-const WAITING = "Paired. Waiting for your Grok Bot…";
-const WAITING_V2 = "Paired. Waiting for your Grok Bot… (⚙ → Show code)";
-
-/** The hint, whether this window is on screen, and whether the mini pet animates. */
+/** Which section is on the panel, whether this window is on screen, and its size. */
 function syncMain(): void {
-  if (view === "pets") {
-    const want = agents.size > 0 ? "" : v2Active && !v2State.seen() ? WAITING_V2 : WAITING;
-    if (hint.textContent !== want) hint.textContent = want;
+  const s = settingsOpen();
+  $("pair-start").hidden = s || view !== "pair-start";
+  $("pair-code").hidden = s || view !== "pair-code";
+  $("waiting").hidden = s || view !== "pets" || agents.size > 0;
+  $("gear").setAttribute("aria-pressed", String(s));
+  if (view === "pets" && agents.size === 0) {
+    const first = !v2State.seen();
+    setText("w-title", first ? "Waiting for your first bot…" : "Waiting for your bots…");
+    setText(
+      "w-sub",
+      first
+        ? "Paste the pairing message to a Grok Bot. Its pet pops up on your desk the moment it posts."
+        : "Paired and listening. Each bot's pet pops up on your desk when it posts.",
+    );
+    $("w-code").hidden = !v2Active;
   }
-  applyVisible(mainWindowVisible({ view, settingsOpen: !$("settings").hidden, pets: agents.size }));
-  if (view === "pair-start") startMini();
+  applyVisible(mainWindowVisible({ view, settingsOpen: s, pets: agents.size }));
+  fitWindow();
+}
+
+function setText(id: string, text: string): void {
+  const el = $(id);
+  if (el.textContent !== text) el.textContent = text;
+}
+
+/** The window is exactly as tall as the panel (it changes with the view). */
+let fitQueued = false;
+function fitWindow(): void {
+  if (fitQueued) return;
+  fitQueued = true;
+  requestAnimationFrame(() => {
+    fitQueued = false;
+    const { width, height } = controlWindowSize(panel.offsetHeight);
+    void setWindowSize(width, height).catch(() => {});
+  });
 }
 
 /** Show/hide this window, one call at a time, ending on the latest wish. */
@@ -123,9 +185,10 @@ function applyVisible(v: boolean): void {
 }
 
 function renderStatus(): void {
-  const c = statusLine(v2Active ? connV2 : null);
-  app.classList.toggle("offline", c.status === "offline");
-  statusEl.textContent = c.text;
+  const h = headerStatus({ paired: v2Active, conn: connV2, host: cfg ? hostOf(cfg.mailboxUrl) : "" });
+  app.classList.toggle("offline", h.tone === "offline");
+  $("status-dot").dataset.s = h.tone;
+  statusEl.textContent = h.text;
 }
 
 function setV2Status(s: ConnStatus, detail?: string): void {
@@ -142,7 +205,8 @@ function hostOf(u: string): string {
 }
 
 function showPairMode(): void {
-  $("pair-mode").textContent = mailbox.supported
+  $("pair-mode").innerHTML = mailbox.supported ? `${LOCK_SVG}<span></span>` : "<span></span>";
+  $("pair-mode").querySelector("span")!.textContent = mailbox.supported
     ? `Private, end-to-end encrypted · via ${hostOf(cfg.mailboxUrl)}`
     : "The private mailbox needs the desktop app";
 }
@@ -174,7 +238,7 @@ function showCodeV2(code: string, isNew: boolean): void {
   shownV2Code = code;
   shownV2IsNew = isNew;
   $("paste-line").textContent = pasteLineV2(code);
-  $("pair-note").textContent = "This code is the key to your pet: share it only with your bots. Works on any number of bots.";
+  $("pair-note").textContent = "It works for any number of bots. The code is the key to your pets: share it only with your own bots.";
   $("cancel-pair").textContent = isNew ? "Cancel" : "Close";
   show("pair-code");
 }
@@ -222,12 +286,11 @@ function handleState(e: StateEvent): void {
 app.addEventListener("mousedown", (ev) => {
   if (ev.button !== 0) return;
   const t = ev.target as HTMLElement;
-  if (t.closest("button, input, textarea, a, label, .paste, .settings")) return;
+  if (t.closest("button, input, textarea, a, label, .paste, .group")) return;
   void startWindowDrag();
 });
 
 // ---------- settings ----------
-let confirmNewTimer: number | undefined;
 
 async function refreshConnRows(): Promise<void> {
   const v2 = mailbox.supported ? await mailbox.status().catch(() => ({ paired: false, mailbox: null })) : null;
@@ -240,18 +303,23 @@ async function refreshConnRows(): Promise<void> {
   $<HTMLButtonElement>("s-v2-unpair").disabled = !v2?.paired;
   $<HTMLButtonElement>("s-v2-new").disabled = !v2;
   $("s-v2-new").textContent = v2?.paired ? "New code" : "Pair";
+  $("s-v2-new").classList.toggle("primary", !v2?.paired);
 }
 
 async function openSettings(): Promise<void> {
   $<HTMLInputElement>("s-mailbox").value = cfg.mailboxUrl;
   $("s-mailbox-note").textContent = "Used for the next new code.";
   $("s-mailbox-note").classList.remove("error");
-  $<HTMLSelectElement>("s-size").value = cfg.petSize;
-  $("s-reset-note").textContent = "Each bot has its own window: drag it anywhere.";
+  for (const r of sizeRadios()) r.checked = r.value === cfg.petSize;
+  $("s-reset-note").textContent = "";
+  disarm($<HTMLButtonElement>("s-v2-new"), "New code");
+  disarm($<HTMLButtonElement>("s-v2-unpair"), "Unpair");
   await refreshConnRows();
   $("settings").hidden = false;
   syncMain();
 }
+
+const sizeRadios = () => Array.from(document.querySelectorAll<HTMLInputElement>('input[name="s-size"]'));
 
 function closeSettings(): void {
   $("settings").hidden = true;
@@ -272,7 +340,7 @@ async function saveSettingsFromForm(): Promise<void> {
     mbNote.classList.add("error");
     return;
   }
-  const size = $<HTMLSelectElement>("s-size").value as PetSize;
+  const size = (sizeRadios().find((r) => r.checked)?.value ?? cfg.petSize) as PetSize;
   saveSettings({
     mailboxUrl: mb.url,
     petSize: size === "small" ? "small" : "large",
@@ -289,10 +357,37 @@ $("s-close").addEventListener("click", closeSettings);
 $("s-reset-pos").addEventListener("click", () => {
   void invokeCmd("pets_reset_positions").catch(() => {});
   $("s-reset-note").textContent = agents.size ? "Done: lined up at the bottom right." : "Done: new bots start at the bottom right.";
+  fitWindow();
 });
 $("s-save").addEventListener("click", () => void saveSettingsFromForm());
 $("s-ntfy").addEventListener("click", () => ($<HTMLInputElement>("s-mailbox").value = DEFAULT_MAILBOX));
+/**
+ * Destructive buttons take a second click: the first one arms it ("Sure? …") for 4 s.
+ * Returns true when this click should go ahead.
+ */
+const armTimers = new Map<HTMLButtonElement, number>();
+function confirmed(btn: HTMLButtonElement, ask: string, label: string): boolean {
+  if (btn.dataset.confirm === "1") {
+    disarm(btn, label);
+    return true;
+  }
+  btn.dataset.confirm = "1";
+  btn.textContent = ask;
+  fitWindow();
+  armTimers.set(btn, window.setTimeout(() => disarm(btn, label), 4000));
+  return false;
+}
+function disarm(btn: HTMLButtonElement, label: string): void {
+  clearTimeout(armTimers.get(btn));
+  armTimers.delete(btn);
+  if (btn.dataset.confirm !== "1") return;
+  delete btn.dataset.confirm;
+  btn.textContent = label;
+}
+
 $("s-v2-unpair").addEventListener("click", () => {
+  // Unpairing silences every bot and deletes the key: ask for a second click.
+  if (!confirmed($<HTMLButtonElement>("s-v2-unpair"), "Sure? Unpair", "Unpair")) return;
   closeSettings();
   void unpairV2();
 });
@@ -302,20 +397,8 @@ $("s-v2-code").addEventListener("click", async () => {
   if (code) showCodeV2(code, false);
 });
 $("s-v2-new").addEventListener("click", () => {
-  const btn = $<HTMLButtonElement>("s-v2-new");
   // Replacing a working pairing silences every bot on the old code: ask for a second click.
-  if (v2Active && btn.dataset.confirm !== "1") {
-    btn.dataset.confirm = "1";
-    btn.textContent = "Sure? Old code stops";
-    clearTimeout(confirmNewTimer);
-    confirmNewTimer = window.setTimeout(() => {
-      delete btn.dataset.confirm;
-      btn.textContent = "New code";
-    }, 4000);
-    return;
-  }
-  delete btn.dataset.confirm;
-  clearTimeout(confirmNewTimer);
+  if (v2Active && !confirmed($<HTMLButtonElement>("s-v2-new"), "Sure? Old code stops", "New code")) return;
   closeSettings();
   void beginV2();
 });
@@ -327,11 +410,44 @@ $("cancel-pair").addEventListener("click", () => {
   else show("pets");
 });
 $("done-pair").addEventListener("click", () => show("pets"));
+$("w-code").addEventListener("click", async () => {
+  const code = await mailbox.code();
+  if (code) showCodeV2(code, false);
+});
+
+// Copy: the button says "Copied" with a check, the card flashes, and Done becomes the main
+// button. If the clipboard refuses, the text is selected so ⌘C works.
+let copyTimer: number | undefined;
+function resetCopy(): void {
+  clearTimeout(copyTimer);
+  const b = $<HTMLButtonElement>("copy");
+  b.textContent = "Copy";
+  b.className = "primary";
+  $("done-pair").className = "";
+  $("code-card").classList.remove("copied");
+}
 $("copy").addEventListener("click", async () => {
   if (!shownV2Code) return;
   const ok = await copyText(pasteLineV2(shownV2Code));
-  $("copy").textContent = ok ? "Copied" : "Copy failed";
-  setTimeout(() => ($("copy").textContent = "Copy"), 1500);
+  const b = $<HTMLButtonElement>("copy");
+  clearTimeout(copyTimer);
+  if (ok) {
+    b.innerHTML = `${CHECK_SVG}<span>Copied</span>`;
+    b.className = "ok copied-btn";
+    $("done-pair").className = "primary";
+    $("code-card").classList.add("copied");
+  } else {
+    b.textContent = "Press ⌘C to copy";
+    const range = document.createRange();
+    range.selectNodeContents($("paste-line"));
+    getSelection()?.removeAllRanges();
+    getSelection()?.addRange(range);
+  }
+  copyTimer = window.setTimeout(() => {
+    b.textContent = "Copy again";
+    b.className = "";
+    $("code-card").classList.remove("copied");
+  }, 1800);
 });
 
 // Network back or window visible again (e.g. after sleep): reconnect now instead of waiting
@@ -344,45 +460,14 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") reconnectNow();
 });
 
-// ---------- the mini pet on the Connect card (the only animation in this window) ----------
-let miniRunning = false;
-function startMini(): void {
-  if (miniRunning) return;
-  miniRunning = true;
-  requestAnimationFrame(miniFrame);
-}
-function miniFrame(): void {
-  if (view !== "pair-start") {
-    miniRunning = false;
-    return;
-  }
-  drawMini(Date.now());
-  requestAnimationFrame(miniFrame);
-}
-
-function drawMini(now: number): void {
-  const c = $<HTMLCanvasElement>("mini");
-  const ctx = c.getContext("2d")!;
-  ctx.imageSmoothingEnabled = false;
-  const def = bank.defs.idle;
-  const sheet = bank.sheet("idle", "#2dd4bf");
-  if (!def || !sheet) return;
-  const f = Math.floor((now * def.fps) / 1000) % def.frames;
-  ctx.clearRect(0, 0, 32, 32);
-  ctx.drawImage(sheet, f * 32, 0, 32, 32, 0, 0, 32, 32);
-}
-
 // ---------- boot ----------
 async function boot(): Promise<void> {
   app.classList.toggle("web", !inTauri);
+  app.classList.toggle("vibrant", inTauri); // the window has macOS vibrancy behind the panel
   cfg = await loadConfig();
   await applyPetSize(); // before the first bot window opens
   void onEvent("ui:open-settings", () => void openSettings()); // menu bar icon, ⚙ or right-click on a pet
-  try {
-    await bank.load();
-  } catch {
-    statusEl.textContent = "sprites failed to load";
-  }
+  void appVersion().then((v) => v && setText("s-version", `Version ${v}`));
   mailbox = inTauri ? new TauriMailbox() : new NoMailbox();
   showPairMode();
   v2Active = mailbox.supported && (await mailbox.status().catch(() => ({ paired: false }))).paired;

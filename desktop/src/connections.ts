@@ -6,11 +6,19 @@ export interface Conn {
   detail?: string;
 }
 
-/** The status line for the mailbox connection (empty when online or not paired). */
-export function statusLine(c: Conn | null): { status: ConnStatus; text: string } {
-  if (!c || c.status === "online") return { status: "online", text: "" };
-  if (c.status === "connecting") return { status: "connecting", text: "connecting…" };
-  return { status: "offline", text: `offline · ${c.detail ?? "retrying"}` };
+export type StatusTone = "none" | "online" | "connecting" | "offline";
+
+/**
+ * The control window's status line under "Desk Pet" (with a coloured dot): whether we are
+ * paired and how the mailbox connection is doing.
+ */
+export function headerStatus(s: { paired: boolean; conn: Conn | null; host: string }): { tone: StatusTone; text: string } {
+  if (!s.paired) return { tone: "none", text: "Not paired" };
+  const via = s.host ? ` · ${s.host}` : "";
+  const c = s.conn;
+  if (!c || c.status === "connecting") return { tone: "connecting", text: `Connecting…${via}` };
+  if (c.status === "online") return { tone: "online", text: `Connected${via}` };
+  return { tone: "offline", text: `Offline · ${c.detail ?? "retrying"}` };
 }
 
 /** The line the user pastes to their Grok Bot for a v2 (dp2) code. */

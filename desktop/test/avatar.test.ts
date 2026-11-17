@@ -9,6 +9,7 @@ import {
   AVATAR_DONE_MS,
   AVATAR_SHAPES,
   avatarCue,
+  calmCue,
   avatarGeometry,
   avatarStyle,
   axisMap,
@@ -344,6 +345,21 @@ describe("state cues", () => {
     assert.deepEqual(owner("z"), ["sleeping"]);
     assert.deepEqual(owner("dot").sort(), ["done", "working"]);
     assert.deepEqual(avatarCue("idle", 100, g).overlays, []);
+  });
+
+  it("reduced motion: the body holds still, and every state still reads from its overlays alone", () => {
+    const list = ["idle", "thinking", "working", "juggling", "needs_you", "error", "done", "sleeping"] as AvatarAnim[];
+    const sigs = list.map((st) => {
+      const cs = over(st, 0, 1700, 20).map(calmCue);
+      for (const c of cs) assert.deepEqual([c.dx, c.dy, c.sx, c.sy, c.lean], [0, 0, 0, 0, 0], `${st} moves`);
+      const raw = over(st, 0, 1700, 20);
+      cs.forEach((c, i) => {
+        assert.equal(c.face, raw[i]!.face, `${st}: the face is kept`);
+        assert.deepEqual(c.overlays, raw[i]!.overlays, `${st}: overlays are kept`);
+      });
+      return [...new Set(cs.flatMap((c) => c.overlays.map((o) => (o.kind === "badge" ? `badge:${o.icon}` : o.kind))))].sort().join(",");
+    });
+    assert.equal(new Set(sigs).size, list.length, JSON.stringify(sigs));
   });
 
   it("juggling throws balls high over the head; needs_you hops and wiggles; error slumps and shudders", () => {

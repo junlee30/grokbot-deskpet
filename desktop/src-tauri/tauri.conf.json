@@ -17,18 +17,25 @@
         "label": "main",
         "title": "Desk Pet",
         "width": 360,
-        "height": 200,
+        "height": 300,
         "resizable": false,
         "maximizable": false,
         "minimizable": false,
         "decorations": false,
         "transparent": true,
-        "shadow": false,
+        "shadow": true,
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "visibleOnAllWorkspaces": true,
         "acceptFirstMouse": true,
-        "visible": false
+        "visible": false,
+        "windowEffects": {
+          "effects": [
+            "popover"
+          ],
+          "state": "active",
+          "radius": 12
+        }
       }
     ],
     "security": {

@@ -457,6 +457,15 @@ export interface Cue {
   overlays: Overlay[];
 }
 
+/**
+ * Reduced motion (prefers-reduced-motion): the body holds still (no hop, squash, stretch, lean
+ * or shake); the face and every overlay stay, so the state still reads from the cloud, ring,
+ * balls, badges and z's.
+ */
+export function calmCue(c: Cue): Cue {
+  return { ...c, dx: 0, dy: 0, sx: 0, sy: 0, lean: 0 };
+}
+
 /** How long the one-shot "done" celebration lasts on an avatar; then the pet settles to idle. */
 export const AVATAR_DONE_MS = 1800;
 export const BADGE = 11;

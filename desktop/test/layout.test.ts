@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   BOTTOM_PAD,
+  CONTROL_MAX_H,
+  CONTROL_MIN_H,
+  CONTROL_W,
+  controlWindowSize,
   EDGE,
   LABEL_H,
   LABEL_OVERLAP,
@@ -15,6 +19,8 @@ import {
   pickScale,
   TOAST_MAX_H,
   TOAST_OVERLAP,
+  TOAST_TAIL,
+  tailX,
   toastMaxWidth,
   type Box,
   type PetSize,
@@ -54,8 +60,8 @@ describe("pet layout", () => {
   });
 
   it("sizes one bot's own window to fit its pet, its toast or working label, and its name", () => {
-    assert.deepEqual(petWindowSize("large"), { width: 184, height: 158 });
-    assert.deepEqual(petWindowSize("small"), { width: 152, height: 126 });
+    assert.deepEqual(petWindowSize("large"), { width: 184, height: 166 });
+    assert.deepEqual(petWindowSize("small"), { width: 152, height: 134 });
     for (const pref of ["large", "small"] as PetSize[]) {
       const { width, height } = petWindowSize(pref);
       const [s, ...rest] = layoutPets(1, width, height, pref);
@@ -120,5 +126,40 @@ describe("toast layout", () => {
         });
       }
     }
+  });
+});
+
+describe("toast tail", () => {
+  it("points at the pet, never off the bubble's rounded corners, for any toast width and pet size", () => {
+    for (const pref of ["large", "small"] as PetSize[]) {
+      const { width, height } = petWindowSize(pref);
+      const [s] = layoutPets(1, width, height, pref);
+      for (let w = 1; w <= 400; w += 7) {
+        const b = layoutToast(s!, w, 30, width, height);
+        const x = tailX(s!, b);
+        assert.ok(x >= 0 && x <= b.width, `inside the bubble (w=${w})`);
+        if (b.width > 28) assert.ok(x >= 14 && x <= b.width - 14, `off the corners (w=${w})`);
+        if (b.width > 28 && b.left + 14 <= s!.cx && s!.cx <= b.left + b.width - 14) assert.equal(b.left + x, Math.round(s!.cx), "right under the bubble: points at the pet's centre");
+      }
+    }
+  });
+
+  it("the tail reaches into the frame top no further than the old toast did, and the window still fits", () => {
+    assert.ok(TOAST_OVERLAP + TOAST_TAIL <= 6);
+    for (const pref of ["large", "small"] as PetSize[]) {
+      const { width, height } = petWindowSize(pref);
+      const [s] = layoutPets(1, width, height, pref);
+      const b = layoutToast(s!, 10_000, 10_000, width, height);
+      assert.ok(b.top >= EDGE && b.top + b.height + TOAST_TAIL <= s!.spriteTop + 6);
+    }
+  });
+});
+
+describe("control window size", () => {
+  it("fixed width, as tall as the panel, within bounds", () => {
+    assert.deepEqual(controlWindowSize(287.2), { width: CONTROL_W, height: 288 });
+    assert.equal(controlWindowSize(0).height, CONTROL_MIN_H);
+    assert.equal(controlWindowSize(5000).height, CONTROL_MAX_H);
+    assert.equal(controlWindowSize(Number.NaN).height, CONTROL_MIN_H);
   });
 });

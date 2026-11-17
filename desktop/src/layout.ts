@@ -14,14 +14,19 @@ export const LABEL_H = 16;
 export const LABEL_OVERLAP = 2;
 export const MAX_COL_W = 176;
 export const TOAST_LINES = 2;
-export const TOAST_LINE_H = 14;
-export const TOAST_PAD_Y = 4;
-export const TOAST_PAD_X = 7;
+export const TOAST_LINE_H = 16;
+export const TOAST_PAD_Y = 6;
+export const TOAST_PAD_X = 10;
 export const TOAST_BORDER = 1;
 /** Tallest a toast can be (2 lines + padding + border). */
 export const TOAST_MAX_H = TOAST_LINES * TOAST_LINE_H + 2 * TOAST_PAD_Y + 2 * TOAST_BORDER;
-/** How far a toast may dip into the top of its sprite (the head sits a few px below the frame top). */
-export const TOAST_OVERLAP = 6;
+/**
+ * How far a toast's box may dip into the top of its sprite. 0: only its tail (TOAST_TAIL px,
+ * CSS .bubble::after) reaches into the frame, where the head sits a few px below the top.
+ */
+export const TOAST_OVERLAP = 0;
+/** The toast's tail hangs this far below its box, pointing at the pet. */
+export const TOAST_TAIL = 6;
 /** The working label sits just above the sprite: the working hop reaches the frame top. */
 export const LABEL_OVERLAP_PX = 0;
 const COL_GAP = 2; // toast inset inside its column
@@ -78,6 +83,13 @@ export function layoutPets(count: number, winW: number, winH: number, pref: PetS
   return slots;
 }
 
+/** Where the tail sits along a toast placed at `box`: under the pet, kept off the rounded corners. */
+export function tailX(slot: Slot, box: Box): number {
+  const inset = 14;
+  if (box.width <= 2 * inset) return Math.round(box.width / 2);
+  return Math.round(Math.max(inset, Math.min(box.width - inset, slot.cx - box.left)));
+}
+
 /** Widest a toast may be in this slot. */
 export function toastMaxWidth(slot: Slot): number {
   return Math.max(1, slot.x1 - slot.x0 - 2 * COL_GAP);
@@ -111,6 +123,16 @@ export function petWindowSize(pref: PetSize): { width: number; height: number } 
   const sprite = FRAME * pickScale(PET_WINDOW_W[pref] - 2 * EDGE, pref);
   // The working label (overlap 0) is the tallest stack: toast, sprite, name label, padding.
   return { width: PET_WINDOW_W[pref], height: EDGE + TOAST_MAX_H + LABEL_OVERLAP_PX + sprite + LABEL_H - LABEL_OVERLAP + BOTTOM_PAD };
+}
+
+/** The control window (index.html): a fixed width, as tall as its panel for the current view. */
+export const CONTROL_W = 360;
+export const CONTROL_MIN_H = 120;
+export const CONTROL_MAX_H = 520;
+
+export function controlWindowSize(panelH: number): { width: number; height: number } {
+  const h = Number.isFinite(panelH) ? Math.ceil(panelH) : CONTROL_MIN_H;
+  return { width: CONTROL_W, height: Math.max(CONTROL_MIN_H, Math.min(CONTROL_MAX_H, h)) };
 }
 
 export function overlaps(a: Box, b: Box): boolean {
