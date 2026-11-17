@@ -19,11 +19,18 @@ export interface StateEvent {
   avatar?: { shape: string; color: string };
   /** The bot's Grok Bot agent UUID; a click opens its chat. Validated again by grokbotId. */
   grokbot_id?: string;
+  /** The bot's publisher version, and whether it is older than the one this app ships with. */
+  pv?: string;
+  pv_outdated?: boolean;
+  /** Posts the bot's computer couldn't deliver because the mailbox rate-limited it. */
+  dropped?: number;
 }
 
 export type ConnStatus = "connecting" | "online" | "offline";
 
-const STATES = new Set(["idle", "thinking", "working", "juggling", "needs_you", "done", "error", "sleeping"]);
+/** The bot states, in protocol order (checked against protocol/v2.json in test/protocol.test.ts). */
+export const STATE_LIST: readonly PetState[] = ["idle", "thinking", "working", "juggling", "needs_you", "done", "error", "sleeping"];
+const STATES: ReadonlySet<string> = new Set(STATE_LIST);
 
 export function isStateEvent(p: unknown): p is StateEvent {
   if (typeof p !== "object" || p === null) return false;

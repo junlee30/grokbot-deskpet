@@ -226,6 +226,49 @@ pub struct BotEvent {
     pub avatar: Option<(String, String)>,
     /// The bot's Grok Bot agent UUID (lowercase), for opening its chat; dropped unless valid.
     pub grokbot_id: Option<String>,
+    /// The bot's publisher version (`deskpet-publish --version`); None from publishers before 2.1.
+    pub pv: Option<String>,
+    /// Posts the bot's computer couldn't deliver because the mailbox rate-limited it.
+    pub dropped: Option<u64>,
+}
+
+// ---------------------------------------------------------------- shared protocol file
+
+/// `protocol/v2.json`: the constants every side of the protocol checks itself against.
+pub const PROTOCOL_JSON: &str = include_str!("../../../protocol/v2.json");
+
+/// The newest publisher version (from protocol/v2.json); bots on an older one are asked to update.
+pub fn latest_publisher() -> &'static str {
+    static V: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    V.get_or_init(|| {
+        serde_json::from_str::<Value>(PROTOCOL_JSON)
+            .ok()
+            .and_then(|v| v.get("publisher_version").and_then(Value::as_str).map(str::to_string))
+            .unwrap_or_default()
+    })
+}
+
+/// `major.minor.patch`, each at most 4 digits.
+fn version_parts(s: &str) -> Option<[u32; 3]> {
+    let mut it = s.split('.');
+    let mut out = [0u32; 3];
+    for o in out.iter_mut() {
+        let p = it.next()?;
+        if p.is_empty() || p.len() > 4 || !p.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        *o = p.parse().ok()?;
+    }
+    it.next().is_none().then_some(out)
+}
+
+/// A missing or older publisher version than `latest`.
+pub fn publisher_outdated(pv: Option<&str>, latest: &str) -> bool {
+    match (pv.and_then(version_parts), version_parts(latest)) {
+        (_, None) => false,
+        (None, Some(_)) => true,
+        (Some(have), Some(want)) => have < want,
+    }
 }
 
 fn text(o: &Map<String, Value>, k: &str, max: usize, required: bool) -> Result<Option<String>, &'static str> {
@@ -304,6 +347,8 @@ pub fn parse_event(plaintext: &[u8]) -> Result<BotEvent, &'static str> {
         avatar: avatar(o.get("avatar"))?,
         // Optional and only decoration: a bad one is dropped, the event still counts.
         grokbot_id: o.get("grokbot_id").and_then(Value::as_str).filter(|s| grokbot_id_ok(s)).map(str::to_string),
+        pv: o.get("pv").and_then(Value::as_str).filter(|s| version_parts(s).is_some()).map(str::to_string),
+        dropped: o.get("dropped").and_then(Value::as_u64).filter(|&n| (1..=1_000_000).contains(&n)),
     })
 }
 
@@ -330,6 +375,13 @@ impl BotEvent {
         }
         if let Some(id) = &self.grokbot_id {
             m["grokbot_id"] = json!(id);
+        }
+        if let Some(pv) = &self.pv {
+            m["pv"] = json!(pv);
+        }
+        m["pv_outdated"] = json!(publisher_outdated(self.pv.as_deref(), latest_publisher()));
+        if let Some(n) = self.dropped {
+            m["dropped"] = json!(n);
         }
         m
     }
@@ -533,8 +585,67 @@ mod tests {
         assert!(format!("{:?}", fixed()).find("key").is_none(), "Debug never shows the key");
     }
 
+    fn protocol() -> Value {
+        serde_json::from_str(PROTOCOL_JSON).expect("protocol/v2.json parses")
+    }
+
+    fn strs(v: &Value) -> Vec<&str> {
+        v.as_array().unwrap().iter().map(|s| s.as_str().unwrap()).collect()
+    }
+
+    /// protocol/v2.json is the shared truth: the node publisher and the frontend test against it too.
+    #[test]
+    fn constants_match_protocol_file() {
+        let p = protocol();
+        assert_eq!(strs(&p["states"]), STATES);
+        assert_eq!(strs(&p["avatar_shapes"]), AVATAR_SHAPES);
+        assert_eq!(strs(&p["avatar_colors"]), AVATAR_COLORS);
+        assert_eq!(p["limits"]["plaintext"], MAX_PLAINTEXT);
+        assert_eq!(p["limits"]["envelope"], MAX_ENVELOPE);
+        assert_eq!(p["fixture"]["code"], FIXTURE_CODE);
+        assert_eq!(p["fixture"]["plaintext"], FIXTURE_PLAINTEXT);
+        assert_eq!(p["fixture"]["envelope"], FIXTURE_ENVELOPE);
+        assert!(version_parts(latest_publisher()).is_some(), "publisher_version is x.y.z");
+    }
+
+    #[test]
+    fn protocol_cases() {
+        let p = protocol();
+        for v in p["valid"].as_array().unwrap() {
+            let mut v = v.clone();
+            v.as_object_mut().unwrap().remove("$comment");
+            let e = parse_event(v.to_string().as_bytes()).unwrap_or_else(|err| panic!("{err}: {v}"));
+            let ui = e.to_ui_json(0);
+            for (k, want) in v.as_object().unwrap() {
+                assert_eq!(&ui[k], want, "{k} in {v}");
+            }
+        }
+        for v in p["accepted_with_fields_dropped"].as_array().unwrap() {
+            let e = parse_event(v.to_string().as_bytes()).unwrap_or_else(|err| panic!("{err}: {v}"));
+            assert!(e.grokbot_id.is_none() && e.pv.is_none() && e.dropped.is_none(), "{v}");
+            assert!(e.to_ui_json(0)["pv_outdated"].as_bool().unwrap(), "no pv: outdated");
+        }
+        for c in p["invalid"].as_array().unwrap() {
+            assert!(parse_event(c["event"].to_string().as_bytes()).is_err(), "{}", c["why"]);
+        }
+    }
+
+    #[test]
+    fn publisher_versions() {
+        assert!(publisher_outdated(None, "2.1.0"));
+        assert!(publisher_outdated(Some("2.0.9"), "2.1.0"));
+        assert!(publisher_outdated(Some("1.99.99"), "2.1.0"));
+        assert!(!publisher_outdated(Some("2.1.0"), "2.1.0"));
+        assert!(!publisher_outdated(Some("2.10.0"), "2.9.0"), "numeric, not string, order");
+        assert!(!publisher_outdated(Some("3.0.0"), "2.1.0"));
+        assert!(!publisher_outdated(None, ""), "no latest known: never nag");
+        for bad in ["2.1", "2.1.0.0", "v2.1.0", "2..1", "99999.0.0", "2.1.0-rc1"] {
+            assert!(version_parts(bad).is_none(), "{bad}");
+        }
+    }
+
     /// Cross-implementation vector: skill/deskpet-publish (node) must produce the same bytes.
-    /// The same constants are asserted in skill/test/deskpet-publish.test.mjs.
+    /// The same constants are in protocol/v2.json and asserted by the publisher's tests.
     #[test]
     fn fixed_vector_matches_node_publisher() {
         let p = fixed();

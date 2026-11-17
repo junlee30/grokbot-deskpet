@@ -3,19 +3,29 @@
 // Node >= 12 standard library only (crypto, fs, child_process, https). No npm packages.
 //
 //   printf '%s' "$CODE" | deskpet-publish pair     store a dp2 pairing code (read from stdin)
-//   deskpet-publish status                          "paired (mailbox ntfy.sh)" / "not paired"
-//   deskpet-publish unpair                          forget the pairing
+//   deskpet-publish init <agent_id> [agent_name] [--profile <profile.json>]
+//                   [--avatar <shape>/<color>] [--grokbot-id <uuid>]
+//                                                   set up one bot on this computer (once)
+//   deskpet-publish --bot <agent_id> <state> <event> [message] [--session <id>]
+//                                                   post for a bot set up with init
 //   deskpet-publish <agent_id> <agent_name> <state> <event> [message]
 //                   [--session <id>] [--avatar <shape>/<color>] [--grokbot-id <uuid>]
+//                                                   post with everything on the command line
+//   deskpet-publish bots                            list the bots set up on this computer
+//   deskpet-publish status                          "paired (mailbox ntfy.sh)" / "not paired"
+//   printf '%s' "$TOKEN" | deskpet-publish token    store an ntfy access token (token --clear)
+//   deskpet-publish unpair                          forget the pairing
+//   deskpet-publish --version
 //
-// Env: DESK_PET_HOME (default ~/.deskpet), DESK_PET_SESSION (default "default"),
-//      DESK_PET_AVATAR ('{"shape":"blob","color":"black"}') or DESK_PET_AVATAR_SHAPE +
+// Env: DESK_PET_HOME (default ~/.deskpet), DESK_PET_BOT (= --bot), DESK_PET_SESSION (default
+//      "default"), DESK_PET_AVATAR ('{"shape":"blob","color":"black"}') or DESK_PET_AVATAR_SHAPE +
 //      DESK_PET_AVATAR_COLOR, DESK_PET_GROKBOT_ID (this bot's Grok Bot agent UUID; clicking
-//      the pet opens its chat), DESK_PET_DEBUG=1 (one-line outcome on stderr, never secrets).
+//      the pet opens its chat), DESK_PET_NTFY_TOKEN (= token), DESK_PET_DEBUG=1 (one-line
+//      outcome on stderr, never secrets).
 //
 // Publishing always fails open: exit 0, at most ~3 s, no output unless DESK_PET_DEBUG=1.
-// Secrets (the pairing code, topic, key) are never printed, never put on a command line
-// (curl gets its URL from stdin), and only stored in $DESK_PET_HOME/pairing (mode 0600).
+// Secrets (the pairing code, topic, key, access token) are never printed, never put on a
+// command line (curl gets its config on stdin), and only stored under $DESK_PET_HOME (0600).
 //
 // Crypto: XChaCha20-Poly1305 (= libsodium crypto_aead_xchacha20poly1305_ietf): HChaCha20 below
 // derives a subkey from the first 16 nonce bytes, then node's built-in IETF ChaCha20-Poly1305
@@ -27,6 +37,8 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 
+/** Publisher version, sent as `pv` so the pet can tell when a bot's copy is out of date. */
+const VERSION = "2.1.0";
 const PREFIX = "dp2.";
 const DEFAULT_MAILBOX = "https://ntfy.sh";
 const STATES = ["idle", "thinking", "working", "juggling", "needs_you", "done", "error", "sleeping"];
@@ -36,6 +48,9 @@ const COLORS = "black brown red orange yellow green cyan blue violet magenta gra
 const TIMEOUT_MS = 3000;
 const HEARTBEAT_MIN_MS = 4 * 60 * 1000; // ntfy.sh allows ~250 messages/day per IP: be frugal
 const DUP_WINDOW_MS = 10 * 1000;
+/** A busy state (thinking/working/juggling) repeated sooner than this only changes the label: skip. */
+const SAME_STATE_MIN_MS = 15 * 1000;
+const BUSY = ["thinking", "working", "juggling"];
 const RATE_LIMIT_BACKOFF_MS = 15 * 60 * 1000;
 
 // ------------------------------------------------------------------ base64url
@@ -214,6 +229,8 @@ function buildEvent(a) {
   if (av) e.avatar = av;
   const gid = parseGrokbotId(a.grokbotId);
   if (gid) e.grokbot_id = gid;
+  e.pv = VERSION;
+  if (Number.isInteger(a.dropped) && a.dropped > 0) e.dropped = Math.min(a.dropped, 1000000);
   return e;
 }
 
@@ -253,7 +270,7 @@ function readState() {
 function saveState(st, now) {
   // Keep it small: drop sessions idle for a day, cap at 64.
   const entries = Object.entries(st.sessions)
-    .filter(([, v]) => v && now - v.at < 86_400_000)
+    .filter(([, v]) => v && now - v.at < 86400000)
     .sort((x, y) => y[1].at - x[1].at)
     .slice(0, 64);
   st.sessions = Object.fromEntries(entries);
@@ -266,7 +283,8 @@ function saveState(st, now) {
 
 /**
  * Decide whether to send (ntfy.sh's free tier allows ~250 messages/day per IP, shared by every
- * bot on this computer). Returns null to send, or the reason to skip.
+ * bot on this computer). Returns null to send, or the reason to skip. State changes always go;
+ * a busy state repeated within 15 s (a new tool, a new label) waits for the next post.
  */
 function skipReason(st, key, e, now) {
   if (st.backoffUntil && now < st.backoffUntil) return "mailbox rate limit, backing off";
@@ -276,13 +294,14 @@ function skipReason(st, key, e, now) {
   if (last.state === e.state && last.event === e.event && (last.message || "") === (e.message || "") && now - last.at < DUP_WINDOW_MS) {
     return "duplicate";
   }
+  if (last.state === e.state && BUSY.includes(e.state) && now - last.at < SAME_STATE_MIN_MS) return "same state, too soon";
   return null;
 }
 
 // ------------------------------------------------------------------ HTTP
 
 /** POST via curl (honours the machine's proxy settings); the URL goes to curl on stdin. */
-function postCurl(url, body) {
+function postCurl(url, body, token) {
   const { spawn } = require("child_process");
   return new Promise((resolve) => {
     let out = "";
@@ -307,6 +326,7 @@ function postCurl(url, body) {
         `header = "X-Firebase: no"`,
         `header = "X-Title: Desk Pet"`,
         `user-agent = "deskpet-publish/2"`,
+        ...(token ? [`header = ${q(`Authorization: Bearer ${token}`)}`] : []),
         `data-binary = ${q(body)}`,
         "",
       ].join("\n"),
@@ -314,8 +334,9 @@ function postCurl(url, body) {
   });
 }
 
-function postNode(url, body) {
+function postNode(url, body, token) {
   const u = new URL(url);
+  const auth = token ? { authorization: `Bearer ${token}` } : {};
   const mod = require(u.protocol === "https:" ? "https" : "http");
   return new Promise((resolve) => {
     const req = mod.request(
@@ -323,7 +344,7 @@ function postNode(url, body) {
       {
         method: "POST",
         timeout: TIMEOUT_MS,
-        headers: { "content-type": "text/plain", "x-firebase": "no", "x-title": "Desk Pet", "user-agent": "deskpet-publish/2", "content-length": Buffer.byteLength(body) },
+        headers: { "content-type": "text/plain", "x-firebase": "no", "x-title": "Desk Pet", "user-agent": "deskpet-publish/2", "content-length": Buffer.byteLength(body), ...auth },
       },
       (res) => {
         res.resume();
@@ -336,12 +357,12 @@ function postNode(url, body) {
   });
 }
 
-async function post(url, body) {
+async function post(url, body, token) {
   if (!process.env.DESK_PET_NO_CURL) {
-    const r = await postCurl(url, body);
+    const r = await postCurl(url, body, token);
     if (!r.noCurl) return r.status;
   }
-  return (await postNode(url, body)).status;
+  return (await postNode(url, body, token)).status;
 }
 
 // ------------------------------------------------------------------ commands
@@ -358,19 +379,9 @@ function readStdin() {
   }
 }
 
-/** A deprecated v1 relay code (`K7Q-42M`, case and the dash optional) and no dp2 code. */
-const V1_CODE = /(^|[^A-Za-z0-9_.-])[A-HJ-NP-Za-hj-np-z2-9]{3}-?[A-HJ-NP-Za-hj-np-z2-9]{3}([^A-Za-z0-9_-]|$)/;
-const V1_DEPRECATED =
-  "that is an old v1 relay code; v1 is deprecated and its relay is gone. " +
-  "Make a new code in Desk Pet (gear icon, then Pair; it starts with dp2.) and pair with that";
-
 function cmdPair() {
   const input = readStdin();
   const m = /dp2\.[A-Za-z0-9_-]+/.exec(input);
-  if (!m && V1_CODE.test(input.trim())) {
-    process.stderr.write(`deskpet-publish: ${V1_DEPRECATED}\n`);
-    return 1;
-  }
   let p;
   try {
     p = decodePairing(m ? m[0] : input);
@@ -391,12 +402,141 @@ function cmdPair() {
 function cmdStatus() {
   try {
     const p = loadPairing();
-    process.stdout.write(`paired (mailbox ${new URL(p.base).host})\n`);
+    const tok = readToken() ? ", access token set" : "";
+    process.stdout.write(`paired (mailbox ${new URL(p.base).host}${tok})\n`);
     return 0;
   } catch {
     process.stdout.write("not paired\n");
     return 1;
   }
+}
+
+// ------------------------------------------------------------------ access token (optional)
+
+/** An ntfy access token (`tk_…`): raises the mailbox's limits on a paid or self-hosted ntfy. */
+const TOKEN_RE = /^[A-Za-z0-9_.-]{1,128}$/;
+
+function readToken() {
+  const env = (process.env.DESK_PET_NTFY_TOKEN || "").trim();
+  if (env) return TOKEN_RE.test(env) ? env : "";
+  try {
+    const t = fs.readFileSync(path.join(home(), "ntfy-token"), "utf8").trim();
+    return TOKEN_RE.test(t) ? t : "";
+  } catch {
+    return "";
+  }
+}
+
+function cmdToken(argv) {
+  const file = path.join(home(), "ntfy-token");
+  if (argv[0] === "--clear") {
+    try {
+      fs.unlinkSync(file);
+    } catch {
+      /* none */
+    }
+    process.stdout.write("Access token removed.\n");
+    return 0;
+  }
+  const t = readStdin().trim();
+  if (!TOKEN_RE.test(t)) {
+    process.stderr.write("deskpet-publish: give the ntfy access token on stdin (letters, digits, _ . -)\n");
+    return 1;
+  }
+  writePrivate(file, t + "\n");
+  process.stdout.write("Access token stored.\n");
+  return 0;
+}
+
+// ------------------------------------------------------------------ bot profiles
+
+function botFile(id) {
+  return path.join(home(), "bots", `${id}.json`);
+}
+
+/** Avatar, name and Grok Bot id from a Grok Bot profile.json (…/agents/<uuid>/profile.json). */
+function readGrokbotProfile(file) {
+  const o = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (!o || typeof o !== "object") throw new Error("profile is not a JSON object");
+  const name = typeof o.name === "string" ? clean(o.name, 64) : "";
+  return {
+    name,
+    avatar: parseAvatar({ shape: o.avatarShape, color: o.avatarColor }),
+    grokbotId: parseGrokbotId(path.basename(path.dirname(path.resolve(file)))),
+  };
+}
+
+/**
+ * A bot set up with `init`, or null. When it was set up from a Grok Bot profile, the avatar
+ * (and the name, unless one was given) are re-read from it, so profile changes show up.
+ */
+function loadBot(id) {
+  let b;
+  try {
+    b = JSON.parse(fs.readFileSync(botFile(id), "utf8"));
+  } catch {
+    return null;
+  }
+  if (!b || b.agent_id !== id) return null;
+  if (b.profile) {
+    try {
+      const pr = readGrokbotProfile(b.profile);
+      if (pr.avatar) b.avatar = pr.avatar;
+      if (pr.name && !b.name_given) b.agent_name = pr.name;
+    } catch {
+      /* keep what init stored */
+    }
+  }
+  return b;
+}
+
+function cmdInit(argv) {
+  const { pos, opt } = parseArgs(argv);
+  const fail = (m) => {
+    process.stderr.write(`deskpet-publish: ${m}\n`);
+    return 1;
+  };
+  const id = String(pos[0] || "").toLowerCase();
+  if (!AGENT_ID_RE.test(id)) return fail("usage: deskpet-publish init <agent_id> [agent_name] [--profile <profile.json>] (agent_id: [a-z0-9_-]{1,64})");
+  let pr = { name: "", avatar: null, grokbotId: null };
+  let profile = null;
+  if (opt.profile) {
+    profile = path.resolve(opt.profile);
+    try {
+      pr = readGrokbotProfile(profile);
+    } catch (e) {
+      return fail(`can't read the profile (${e.code || e.message})`);
+    }
+  }
+  const given = clean(pos.slice(1).join(" "), 64);
+  const bot = {
+    agent_id: id,
+    agent_name: given || pr.name || id,
+    name_given: !!given,
+    avatar: parseAvatar(opt.avatar) || pr.avatar,
+    grokbot_id: parseGrokbotId(opt["grokbot-id"]) || pr.grokbotId,
+    profile,
+  };
+  fs.mkdirSync(path.join(ensureHome(), "bots"), { recursive: true, mode: 0o700 });
+  writePrivate(botFile(id), JSON.stringify(bot, null, 2) + "\n");
+  const bits = [bot.avatar ? `avatar ${bot.avatar.shape}/${bot.avatar.color}` : "no avatar", bot.grokbot_id ? `Grok Bot id ${bot.grokbot_id}` : "no Grok Bot id"];
+  process.stdout.write(`Set up ${id} ("${bot.agent_name}", ${bits.join(", ")}).\nPost with: deskpet-publish --bot ${id} <state> <event> [message]\n`);
+  return 0;
+}
+
+function cmdBots() {
+  let names = [];
+  try {
+    names = fs.readdirSync(path.join(home(), "bots")).filter((f) => f.endsWith(".json"));
+  } catch {
+    /* none yet */
+  }
+  const lines = names
+    .map((f) => loadBot(f.slice(0, -5)))
+    .filter(Boolean)
+    .map((b) => `${b.agent_id}\t${b.agent_name}\t${b.avatar ? `${b.avatar.shape}/${b.avatar.color}` : "-"}\t${b.grokbot_id || "-"}`);
+  process.stdout.write(lines.length ? lines.join("\n") + "\n" : "no bots set up (deskpet-publish init <agent_id> …)\n");
+  return 0;
 }
 
 function cmdUnpair() {
@@ -411,7 +551,7 @@ function cmdUnpair() {
   return 0;
 }
 
-const OPTIONS = ["--session", "--avatar", "--grokbot-id"];
+const OPTIONS = ["--session", "--avatar", "--grokbot-id", "--bot", "--profile"];
 
 function parseArgs(argv) {
   const pos = [];
@@ -429,9 +569,27 @@ function parseArgs(argv) {
 async function cmdPublish(argv) {
   const debug = (m) => process.env.DESK_PET_DEBUG === "1" && process.stderr.write(`deskpet-publish: ${m}\n`);
   const { pos, opt } = parseArgs(argv);
-  if (pos.length < 4) {
-    debug("usage: deskpet-publish <agent_id> <agent_name> <state> <event> [message]");
-    return;
+  const env = process.env;
+  const botId = String(opt.bot || env.DESK_PET_BOT || "").toLowerCase();
+  let who;
+  if (botId) {
+    // Short form: everything about the bot comes from its `init` profile.
+    if (pos.length < 2) {
+      debug("usage: deskpet-publish --bot <agent_id> <state> <event> [message]");
+      return;
+    }
+    const b = AGENT_ID_RE.test(botId) ? loadBot(botId) : null;
+    if (!b) {
+      debug(`no bot "${botId}" set up here: run deskpet-publish init ${botId} …`);
+      return;
+    }
+    who = { agentId: b.agent_id, agentName: b.agent_name, avatar: b.avatar, grokbotId: b.grokbot_id, rest: pos };
+  } else {
+    if (pos.length < 4) {
+      debug("usage: deskpet-publish <agent_id> <agent_name> <state> <event> [message]");
+      return;
+    }
+    who = { agentId: pos[0], agentName: pos[1], avatar: null, grokbotId: null, rest: pos.slice(2) };
   }
   let p;
   try {
@@ -440,22 +598,23 @@ async function cmdPublish(argv) {
     debug("not paired");
     return;
   }
-  const env = process.env;
   const avatar =
     opt.avatar ||
     env.DESK_PET_AVATAR ||
-    (env.DESK_PET_AVATAR_SHAPE && env.DESK_PET_AVATAR_COLOR ? `${env.DESK_PET_AVATAR_SHAPE}/${env.DESK_PET_AVATAR_COLOR}` : "");
+    (env.DESK_PET_AVATAR_SHAPE && env.DESK_PET_AVATAR_COLOR ? `${env.DESK_PET_AVATAR_SHAPE}/${env.DESK_PET_AVATAR_COLOR}` : "") ||
+    who.avatar;
+  const grokbotId = opt["grokbot-id"] || env.DESK_PET_GROKBOT_ID || who.grokbotId || "";
   const now = Date.now();
   const st = readState();
   const session = clean(opt.session || env.DESK_PET_SESSION || "default", 128) || "default";
-  const key = `${String(pos[0]).toLowerCase()}\n${session}`;
+  const key = `${String(who.agentId).toLowerCase()}\n${session}`;
   const prev = st.sessions[key];
   // seq: strictly increasing per agent+session, also across processes (microsecond clock).
   const seq = Math.max(now * 1000 + Math.floor(Math.random() * 1000), prev && prev.seq ? prev.seq + 1 : 0);
+  const [state, event, ...words] = who.rest;
   let e;
   try {
-    const grokbotId = opt["grokbot-id"] || env.DESK_PET_GROKBOT_ID || "";
-    e = buildEvent({ agentId: pos[0], agentName: pos[1], state: pos[2], event: pos[3], message: pos.slice(4).join(" "), session, avatar, grokbotId, now, seq });
+    e = buildEvent({ agentId: who.agentId, agentName: who.agentName, state, event, message: words.join(" "), session, avatar, grokbotId, now, seq, dropped: st.dropped });
   } catch (err) {
     debug(`skipped: ${err.message}`);
     return;
@@ -463,15 +622,23 @@ async function cmdPublish(argv) {
   const why = skipReason(st, key, e, now);
   if (why) {
     debug(`skipped: ${why}`);
+    if (st.backoffUntil && now < st.backoffUntil) {
+      st.dropped = (st.dropped || 0) + 1; // reported to the pet with the next post that goes through
+      saveState(st, now);
+    }
     return;
   }
-  const status = await post(`${p.base}/${topicName(p)}`, seal(p, JSON.stringify(e)));
+  const status = await post(`${p.base}/${topicName(p)}`, seal(p, JSON.stringify(e)), readToken());
   if (status >= 200 && status < 300) {
     st.sessions[key] = { state: e.state, event: e.event, message: e.message || "", at: now, seq };
     delete st.backoffUntil;
+    delete st.dropped;
     debug(`sent ${status}`);
   } else {
-    if (status === 429) st.backoffUntil = now + RATE_LIMIT_BACKOFF_MS;
+    if (status === 429) {
+      st.backoffUntil = now + RATE_LIMIT_BACKOFF_MS;
+      st.dropped = (st.dropped || 0) + 1;
+    }
     debug(`failed: ${status === 0 ? "mailbox unreachable or timed out" : `mailbox answered ${status}`}`);
   }
   saveState(st, now);
@@ -483,6 +650,13 @@ async function main(argv) {
   if (cmd === "pair") return cmdPair();
   if (cmd === "status") return cmdStatus();
   if (cmd === "unpair") return cmdUnpair();
+  if (cmd === "init") return cmdInit(argv.slice(1));
+  if (cmd === "bots") return cmdBots();
+  if (cmd === "token") return cmdToken(argv.slice(1));
+  if (cmd === "--version" || cmd === "-V") {
+    process.stdout.write(`deskpet-publish ${VERSION}\n`);
+    return 0;
+  }
   if (cmd === "-h" || cmd === "--help" || cmd === undefined) {
     const lines = fs.readFileSync(__filename, "utf8").split("\n");
     const end = lines.findIndex((l) => l.startsWith("// Crypto:"));
@@ -499,7 +673,7 @@ async function main(argv) {
   return 0;
 }
 
-module.exports = { hchacha20, xseal, xopen, decodePairing, encodePairing, topicName, seal, open, buildEvent, parseAvatar, parseGrokbotId, parseArgs, clean, skipReason };
+module.exports = { VERSION, STATES, SHAPES, COLORS, hchacha20, xseal, xopen, decodePairing, encodePairing, topicName, seal, open, buildEvent, parseAvatar, parseGrokbotId, parseArgs, clean, skipReason };
 
 if (require.main === module) {
   main(process.argv.slice(2)).then((code) => process.exit(code || 0), () => process.exit(0));

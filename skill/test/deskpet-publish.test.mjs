@@ -16,11 +16,9 @@ const SCRIPT = path.join(here, "..", "deskpet-publish");
 const require = createRequire(import.meta.url);
 const m = require(SCRIPT);
 
-// Same constants as desktop/src-tauri/src/v2.rs (fixed_vector_matches_node_publisher).
-const FIXTURE_CODE = "dp2.AgABAgMEBQYHCAkKCwwNDg-AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en5N--3c";
-const FIXTURE_PLAINTEXT = `{"agent_id":"jarvis","session":"s-1","state":"idle","event":"paired","ts":"2026-11-16T12:00:00Z","seq":1}`;
-const FIXTURE_ENVELOPE =
-  '{"v":2,"n":"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZX","c":"ii4Skz6egAWSdlXp1MT8J0QuAUwpZu-JucmcYyx3N-pzESFfB0_sCVCnhGtUsTc-rXSIOI5e0hXAkLVtXxb1VDOFhqZO-cgW50g7q9Sc_5N6ZuQ6k0gNyD7nJC8mlsuobqlwTIhhMPd-d5gliJQwWJD_jkGt8-Yd8Q"}';
+// The shared protocol file: the Rust pet (desktop/src-tauri/src/v2.rs) tests against it too.
+const PROTOCOL = JSON.parse(fs.readFileSync(path.join(here, "..", "..", "protocol", "v2.json"), "utf8"));
+const { code: FIXTURE_CODE, plaintext: FIXTURE_PLAINTEXT, envelope: FIXTURE_ENVELOPE } = PROTOCOL.fixture;
 
 const fixedPairing = () => ({
   base: "https://ntfy.sh",
@@ -99,6 +97,41 @@ describe("pairing string", () => {
   });
 });
 
+describe("protocol/v2.json", () => {
+  test("constants and version match", () => {
+    assert.equal(m.VERSION, PROTOCOL.publisher_version, "bump protocol/v2.json publisher_version with VERSION");
+    assert.deepEqual(m.STATES, PROTOCOL.states);
+    assert.deepEqual(m.SHAPES, PROTOCOL.avatar_shapes);
+    assert.deepEqual(m.COLORS, PROTOCOL.avatar_colors);
+  });
+
+  test("the publisher builds exactly the valid events", () => {
+    for (const { $comment, ...want } of PROTOCOL.valid) {
+      const got = m.buildEvent({
+        agentId: want.agent_id,
+        agentName: want.agent_name,
+        session: want.session,
+        state: want.state,
+        event: want.event,
+        message: want.message,
+        avatar: want.avatar,
+        grokbotId: want.grokbot_id,
+        now: Date.parse(want.ts),
+        seq: want.seq,
+        dropped: want.dropped,
+      });
+      assert.deepEqual(got, want);
+    }
+  });
+
+  test("the publisher refuses what it can't fix", () => {
+    for (const c of PROTOCOL.invalid.filter((c) => c.publisher_rejects)) {
+      const e = c.event;
+      assert.throws(() => m.buildEvent({ agentId: e.agent_id, agentName: e.agent_id, session: e.session, state: e.state, event: e.event, now: 0, seq: 1 }), undefined, c.why);
+    }
+  });
+});
+
 describe("event building and throttling", () => {
   const base = { agentId: "Jarvis", agentName: "Jarvis", state: "working", event: "tool_start", session: "s", now: Date.parse("2026-11-16T12:00:00Z"), seq: 5 };
 
@@ -114,7 +147,10 @@ describe("event building and throttling", () => {
       ts: "2026-11-16T12:00:00.000Z",
       seq: 5,
       avatar: { shape: "star", color: "blue" },
+      pv: m.VERSION,
     });
+    assert.equal(m.buildEvent({ ...base, dropped: 7 }).dropped, 7);
+    for (const d of [0, -1, 1.5, "3", undefined]) assert.ok(!("dropped" in m.buildEvent({ ...base, dropped: d })), String(d));
     const long = m.buildEvent({ ...base, message: "é".repeat(300), agentName: "n".repeat(100) });
     assert.equal([...long.message].length, 160);
     assert.equal(long.agent_name.length, 64);
@@ -122,7 +158,7 @@ describe("event building and throttling", () => {
     assert.throws(() => m.buildEvent({ ...base, agentId: "has space" }));
     assert.throws(() => m.buildEvent({ ...base, event: "a b" }));
     // The biggest possible event still fits ntfy's 4096-byte message limit once sealed.
-    const big = m.buildEvent({ ...base, agentId: "a".repeat(64), agentName: "💥".repeat(64), session: "😀".repeat(128), message: "😀".repeat(200), avatar: "squircle/magenta" });
+    const big = m.buildEvent({ ...base, dropped: 1000000, grokbotId: "2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4e5f", agentId: "a".repeat(64), agentName: "💥".repeat(64), session: "😀".repeat(128), message: "😀".repeat(200), avatar: "squircle/magenta" });
     assert.ok(m.seal(newPairing("https://ntfy.sh"), JSON.stringify(big)).length < 4096);
   });
 
@@ -180,7 +216,11 @@ describe("event building and throttling", () => {
     assert.equal(m.skipReason(st, "k", { state: "done", event: "heartbeat" }, now), null);
     st.sessions.k.at = now - 2000;
     assert.equal(m.skipReason(st, "k", { state: "working", event: "tool_start" }, now), "duplicate");
-    assert.equal(m.skipReason(st, "k", { state: "working", event: "tool_start", message: "other" }, now), null);
+    assert.equal(m.skipReason(st, "k", { state: "working", event: "tool_start", message: "other" }, now), "same state, too soon");
+    assert.equal(m.skipReason(st, "k", { state: "working", event: "tool_start", message: "other" }, now + 15_000), null);
+    assert.equal(m.skipReason(st, "k", { state: "needs_you", event: "waiting" }, now), null, "a state change always goes");
+    st.sessions.k.state = "needs_you";
+    assert.equal(m.skipReason(st, "k", { state: "needs_you", event: "waiting", message: "another question" }, now), null, "only busy states are throttled");
     assert.equal(m.skipReason({ sessions: {}, backoffUntil: now + 1 }, "k", { state: "done", event: "turn_end" }, now), "mailbox rate limit, backing off");
   });
 });
@@ -217,19 +257,6 @@ describe("CLI against a fake ntfy", () => {
     assert.equal(r.code, 1);
     assert.ok(!r.stderr.includes(code.slice(4, 30)));
     assert.ok(!fs.existsSync(path.join(home, "pairing")));
-  });
-
-  test("pair: a v1 relay code gets the deprecation advice, nothing is stored", async () => {
-    for (const input of ["K7Q-42M", "k7q42m\n", "Install the Desk Pet skill and pair with code K7Q-42M"]) {
-      const r = await run(["pair"], { env: env(), input });
-      assert.equal(r.code, 1, input);
-      assert.match(r.stderr, /v1 is deprecated/, input);
-      assert.match(r.stderr, /Pair/, input);
-      assert.ok(!fs.existsSync(path.join(home, "pairing")));
-    }
-    // A cut-off dp2 code is still a checksum/format error, not "v1".
-    const r = await run(["pair"], { env: env(), input: code.slice(0, 30) });
-    assert.doesNotMatch(r.stderr, /v1/);
   });
 
   test("pair from stdin (inside a sentence), 0600 file, no secrets printed", async () => {
@@ -297,7 +324,7 @@ describe("CLI against a fake ntfy", () => {
       { args: [], env: { DESK_PET_GROKBOT_ID: "javascript:alert(1)" }, want: undefined },
     ];
     for (const [i, c] of cases.entries()) {
-      const r = await run(["gid", "Gid", "working", `step${i}`, ...c.args], { env: { ...env(), DESK_PET_SESSION: "chat-gid", ...c.env } });
+      const r = await run(["gid", "Gid", "working", `step${i}`, ...c.args], { env: { ...env(), DESK_PET_SESSION: `chat-gid-${i}`, ...c.env } });
       assert.match(r.stderr, /sent 200/);
     }
     const got = messages().slice(before).map((x) => JSON.parse(m.open(pairing, x.message).toString()));
@@ -323,7 +350,16 @@ describe("CLI against a fake ntfy", () => {
     assert.equal(fake.requests.length, n, "no request while backing off");
     const st = JSON.parse(fs.readFileSync(path.join(home, "state.json"), "utf8"));
     assert.ok(st.backoffUntil > Date.now());
+    assert.equal(st.dropped, 2, "the 429'd post and the one skipped while backing off");
     assert.equal(fs.statSync(path.join(home, "state.json")).mode & 0o777, 0o600);
+
+    // Backoff over: the next post that goes through tells the pet how many were dropped.
+    fs.writeFileSync(path.join(home, "state.json"), JSON.stringify({ ...st, backoffUntil: Date.now() - 1 }));
+    const r3 = await run(["jarvis", "Jarvis", "idle", "after_backoff"], { env: env() });
+    assert.match(r3.stderr, /sent 200/);
+    const e = JSON.parse(m.open(pairing, messages().at(-1).message).toString());
+    assert.equal(e.dropped, 2);
+    assert.ok(!("dropped" in JSON.parse(fs.readFileSync(path.join(home, "state.json"), "utf8"))), "reset once reported");
   });
 
   test("unreachable mailbox: exit 0 within the timeout", async () => {
@@ -338,6 +374,81 @@ describe("CLI against a fake ntfy", () => {
     assert.match(r.stderr, /failed: mailbox unreachable/);
     assert.ok(r.ms < 4500, `took ${r.ms} ms`);
     fs.rmSync(h2, { recursive: true, force: true });
+  });
+
+  test("--version, and every event carries pv", async () => {
+    const v = await run(["--version"]);
+    assert.equal(v.stdout.trim(), `deskpet-publish ${m.VERSION}`);
+    assert.match(m.VERSION, /^\d+\.\d+\.\d+$/);
+    const r = await run(["pv", "Pv", "idle", "pvcheck"], { env: env() });
+    assert.match(r.stderr, /sent 200/);
+    const e = JSON.parse(m.open(pairing, messages().at(-1).message).toString());
+    assert.equal(e.pv, m.VERSION);
+    assert.ok(!("dropped" in e));
+  });
+
+  test("init from a Grok Bot profile, then --bot posts carry its name, avatar and id", async () => {
+    const id = "2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4e5f";
+    const dir = path.join(home, "agents", id);
+    fs.mkdirSync(dir, { recursive: true });
+    const profile = path.join(dir, "profile.json");
+    fs.writeFileSync(profile, JSON.stringify({ name: "Jarvis", avatarShape: "Blob", avatarColor: "black", avatarPngBase64: "x" }));
+    const r = await run(["init", "jarvis", "--profile", profile], { env: env() });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /Set up jarvis \("Jarvis", avatar blob\/black, Grok Bot id 2f06d68c/);
+    assert.equal(fs.statSync(path.join(home, "bots", "jarvis.json")).mode & 0o777, 0o600);
+
+    const p1 = await run(["--bot", "jarvis", "working", "tool_start", "Running", "tests"], { env: { ...env(), DESK_PET_SESSION: "bot-1" } });
+    assert.match(p1.stderr, /sent 200/);
+    let e = JSON.parse(m.open(pairing, messages().at(-1).message).toString());
+    assert.deepEqual([e.agent_id, e.agent_name, e.message, e.grokbot_id], ["jarvis", "Jarvis", "Running tests", id]);
+    assert.deepEqual(e.avatar, { shape: "blob", color: "black" });
+
+    // The user changes the avatar and name in Grok Bot: the next post picks them up.
+    fs.writeFileSync(profile, JSON.stringify({ name: "J.A.R.V.I.S.", avatarShape: "heart", avatarColor: "red" }));
+    const p2 = await run(["done", "turn_end"], { env: { ...env(), DESK_PET_BOT: "jarvis", DESK_PET_SESSION: "bot-1" } });
+    assert.match(p2.stderr, /sent 200/);
+    e = JSON.parse(m.open(pairing, messages().at(-1).message).toString());
+    assert.equal(e.agent_name, "J.A.R.V.I.S.");
+    assert.deepEqual(e.avatar, { shape: "heart", color: "red" });
+
+    const list = await run(["bots"], { env: env() });
+    assert.match(list.stdout, /^jarvis\tJ\.A\.R\.V\.I\.S\.\theart\/red\t2f06d68c/);
+  });
+
+  test("init with an explicit name and options; unknown --bot fails open", async () => {
+    const r = await run(["init", "Scout", "Scout", "the", "Scout", "--avatar", "star/cyan"], { env: env() });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /Set up scout \("Scout the Scout", avatar star\/cyan, no Grok Bot id\)/);
+    const bad = await run(["init", "Bad Id!"], { env: env() });
+    assert.equal(bad.code, 1);
+    const missing = await run(["init", "x", "--profile", path.join(home, "nope.json")], { env: env() });
+    assert.equal(missing.code, 1);
+    assert.match(missing.stderr, /can't read the profile/);
+    const n = fake.requests.length;
+    const u = await run(["--bot", "ghost", "working", "tool_start"], { env: env() });
+    assert.equal(u.code, 0);
+    assert.match(u.stderr, /no bot "ghost" set up here/);
+    assert.equal(fake.requests.length, n);
+  });
+
+  test("access token: sent as a Bearer header, never printed", async () => {
+    const tok = "tk_abcdefghijklmnopqrstuvwxyz012";
+    const t = await run(["token"], { env: env(), input: `${tok}\n` });
+    assert.equal(t.code, 0);
+    assert.ok(!t.stdout.includes(tok));
+    assert.equal(fs.statSync(path.join(home, "ntfy-token")).mode & 0o777, 0o600);
+    assert.match((await run(["status"], { env: env() })).stdout, /access token set/);
+    for (const extra of [{}, { DESK_PET_NO_CURL: "1" }]) {
+      const r = await run(["tok", "Tok", "idle", `tok${Object.keys(extra).length}`], { env: { ...env(), ...extra } });
+      assert.match(r.stderr, /sent 200/);
+      assert.ok(!r.stderr.includes(tok));
+      assert.equal(fake.requests.findLast((q) => q.method === "POST").headers.authorization, `Bearer ${tok}`);
+    }
+    assert.equal((await run(["token"], { env: env(), input: "bad token!" })).code, 1);
+    assert.equal((await run(["token", "--clear"], { env: env() })).code, 0);
+    await run(["tok", "Tok", "done", "tok-cleared"], { env: env() });
+    assert.equal(fake.requests.findLast((q) => q.method === "POST").headers.authorization, undefined);
   });
 
   test("unpair removes the pairing", async () => {

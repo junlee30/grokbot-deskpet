@@ -1,0 +1,44 @@
+{
+  "$comment": "Desk Pet v2 protocol constants and test cases, shared by skill/deskpet-publish (node tests), desktop/src-tauri/src/v2.rs (cargo tests, and publisher_version at build time) and the desktop frontend tests. Change it here and every side's tests check they agree. Bump publisher_version together with VERSION in skill/deskpet-publish: the desktop asks bots on an older publisher to update.",
+  "publisher_version": "2.1.0",
+  "states": ["idle", "thinking", "working", "juggling", "needs_you", "done", "error", "sleeping"],
+  "avatar_shapes": ["arch", "bean", "blob", "capsule", "cloud", "clover", "crystal", "cylinder", "dome", "egg", "flower", "gem", "heart", "hex", "house", "leaf", "pebble", "pumpkin", "shield", "sparkle", "square", "squircle", "star", "tablet", "teardrop", "wedge"],
+  "avatar_colors": ["black", "brown", "red", "orange", "yellow", "green", "cyan", "blue", "violet", "magenta", "gray"],
+  "limits": { "agent_id": 64, "agent_name": 64, "session": 128, "event": 64, "message": 160, "plaintext": 2048, "envelope": 4096 },
+  "fixture": {
+    "$comment": "topic = bytes 0..15, key = bytes 0x80..0x9f, nonce = bytes 0x40..0x57",
+    "code": "dp2.AgABAgMEBQYHCAkKCwwNDg-AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en5N--3c",
+    "plaintext": "{\"agent_id\":\"jarvis\",\"session\":\"s-1\",\"state\":\"idle\",\"event\":\"paired\",\"ts\":\"2026-11-16T12:00:00Z\",\"seq\":1}",
+    "envelope": "{\"v\":2,\"n\":\"QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZX\",\"c\":\"ii4Skz6egAWSdlXp1MT8J0QuAUwpZu-JucmcYyx3N-pzESFfB0_sCVCnhGtUsTc-rXSIOI5e0hXAkLVtXxb1VDOFhqZO-cgW50g7q9Sc_5N6ZuQ6k0gNyD7nJC8mlsuobqlwTIhhMPd-d5gliJQwWJD_jkGt8-Yd8Q\"}"
+  },
+  "valid": [
+    {
+      "$comment": "exactly what the publisher builds (its tests rebuild these and compare)",
+      "agent_id": "jarvis", "agent_name": "Jarvis", "session": "chat-1", "state": "working", "event": "tool_start",
+      "message": "Running tests", "ts": "2026-11-16T12:00:00.000Z", "seq": 1763294400000123,
+      "avatar": { "shape": "blob", "color": "black" }, "grokbot_id": "2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4e5f", "pv": "2.1.0"
+    },
+    { "agent_id": "scout", "agent_name": "Scout", "session": "default", "state": "done", "event": "turn_end", "ts": "2026-11-16T12:00:00.000Z", "seq": 2, "pv": "2.1.0", "dropped": 12 },
+    { "agent_id": "a-b_c9", "agent_name": "😀 Bot", "session": "s", "state": "needs_you", "event": "waiting:approval.v2", "ts": "2026-11-16T12:00:00.000Z", "seq": 3, "pv": "2.1.0" }
+  ],
+  "accepted_with_fields_dropped": [
+    { "$comment": "older publisher: no pv", "agent_id": "old", "session": "s", "state": "idle", "event": "paired", "ts": "2026-11-16T12:00:00Z", "seq": 1 },
+    { "$comment": "decoration that fails validation is dropped, the event still counts", "agent_id": "x", "session": "s", "state": "idle", "event": "e", "ts": "2026-11-16T12:00:00Z", "seq": 1, "grokbot_id": "javascript:alert(1)", "pv": "<b>", "dropped": -1 },
+    { "$comment": "unknown fields from newer bots are ignored", "agent_id": "x", "session": "s", "state": "idle", "event": "e", "ts": "2026-11-16T12:00:00Z", "seq": 1, "future_field": { "a": 1 } }
+  ],
+  "invalid": [
+    { "why": "upper-case agent_id", "publisher_rejects": false, "event": { "agent_id": "Jarvis", "session": "s", "state": "idle", "event": "e", "ts": "2026-11-16T12:00:00Z", "seq": 1 } },
+    { "why": "space in agent_id", "publisher_rejects": true, "event": { "agent_id": "has space", "session": "s", "state": "idle", "event": "e", "ts": "2026-11-16T12:00:00Z", "seq": 1 } },
+    { "why": "agent_id too long", "publisher_rejects": true, "event": { "agent_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "session": "s", "state": "idle", "event": "e", "ts": "2026-11-16T12:00:00Z", "seq": 1 } },
+    { "why": "unknown state", "publisher_rejects": true, "event": { "agent_id": "x", "session": "s", "state": "dancing", "event": "e", "ts": "2026-11-16T12:00:00Z", "seq": 1 } },
+    { "why": "space in event", "publisher_rejects": true, "event": { "agent_id": "x", "session": "s", "state": "idle", "event": "a b", "ts": "2026-11-16T12:00:00Z", "seq": 1 } },
+    { "why": "control character in message", "publisher_rejects": false, "event": { "agent_id": "x", "session": "s", "state": "idle", "event": "e", "message": "a\nb", "ts": "2026-11-16T12:00:00Z", "seq": 1 } },
+    { "why": "message over 160", "publisher_rejects": false, "event": { "agent_id": "x", "session": "s", "state": "idle", "event": "e", "message": "mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm", "ts": "2026-11-16T12:00:00Z", "seq": 1 } },
+    { "why": "missing session", "publisher_rejects": false, "event": { "agent_id": "x", "state": "idle", "event": "e", "ts": "2026-11-16T12:00:00Z", "seq": 1 } },
+    { "why": "bad ts", "publisher_rejects": false, "event": { "agent_id": "x", "session": "s", "state": "idle", "event": "e", "ts": "yesterday", "seq": 1 } },
+    { "why": "seq 0", "publisher_rejects": false, "event": { "agent_id": "x", "session": "s", "state": "idle", "event": "e", "ts": "2026-11-16T12:00:00Z", "seq": 0 } },
+    { "why": "seq past 2^53", "publisher_rejects": false, "event": { "agent_id": "x", "session": "s", "state": "idle", "event": "e", "ts": "2026-11-16T12:00:00Z", "seq": 9007199254740993 } },
+    { "why": "avatar not on the list", "publisher_rejects": false, "event": { "agent_id": "x", "session": "s", "state": "idle", "event": "e", "ts": "2026-11-16T12:00:00Z", "seq": 1, "avatar": { "shape": "dragon", "color": "black" } } },
+    { "why": "avatar with extra keys", "publisher_rejects": false, "event": { "agent_id": "x", "session": "s", "state": "idle", "event": "e", "ts": "2026-11-16T12:00:00Z", "seq": 1, "avatar": { "shape": "blob", "color": "black", "png": "x" } } }
+  ]
+}
