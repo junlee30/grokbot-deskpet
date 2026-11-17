@@ -24,9 +24,9 @@ use crate::secrets;
 
 const WATCHDOG: Duration = Duration::from_secs(45); // relay pings every 15s
 const STALE_FOR_KICK: Duration = Duration::from_secs(20);
-const WAKE_TICK: Duration = Duration::from_secs(5);
+pub(crate) const WAKE_TICK: Duration = Duration::from_secs(5);
 const WAKE_GAP: Duration = Duration::from_secs(10);
-const MAX_BUFFER: usize = 64 * 1024;
+pub(crate) const MAX_BUFFER: usize = 64 * 1024;
 
 // ---------------------------------------------------------------- URL validation
 
@@ -68,7 +68,7 @@ pub fn backoff_delay(attempt: u32, jitter01: f64) -> Duration {
     Duration::from_millis((base_ms / 2.0 + j * base_ms / 2.0) as u64)
 }
 
-fn jitter() -> f64 {
+pub(crate) fn jitter() -> f64 {
     let mut h = RandomState::new().build_hasher();
     h.write_u128(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_nanos());
     (h.finish() >> 11) as f64 / (1u64 << 53) as f64
@@ -199,8 +199,8 @@ struct Status {
 }
 
 pub struct StreamHandle {
-    task: tauri::async_runtime::JoinHandle<()>,
-    kick: Arc<Notify>,
+    pub(crate) task: tauri::async_runtime::JoinHandle<()>,
+    pub(crate) kick: Arc<Notify>,
 }
 
 impl StreamHandle {
@@ -224,16 +224,16 @@ fn emit_status(app: &AppHandle, status: &'static str, detail: Option<&str>) {
 
 /// Detects a jump of the wall clock against the monotonic clock (on macOS `Instant` stops
 /// while the machine sleeps), i.e. "we just woke up".
-struct WakeDetector {
+pub(crate) struct WakeDetector {
     mono: Instant,
     wall: SystemTime,
 }
 
 impl WakeDetector {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self { mono: Instant::now(), wall: SystemTime::now() }
     }
-    fn woke(&mut self) -> bool {
+    pub(crate) fn woke(&mut self) -> bool {
         let (m, w) = (Instant::now(), SystemTime::now());
         let mono = m.duration_since(self.mono);
         let wall = w.duration_since(self.wall).unwrap_or_default();

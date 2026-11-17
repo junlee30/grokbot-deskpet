@@ -1,8 +1,12 @@
-//! Relay token storage in the OS keychain (macOS Keychain via the `keyring` crate).
+//! Secrets in the OS keychain (macOS Keychain via the `keyring` crate), service
+//! "com.grokbot.deskpet":
 //!
-//! service = "com.grokbot.deskpet", account = "relay-token:<relay host[:port]>".
-//! A token belongs to exactly one relay, so changing the relay means pairing again.
-//! Nothing in here logs or returns the token to the webview.
+//!   account "relay-token:<relay host[:port]>"  v1 relay token. A token belongs to exactly one
+//!                                              relay, so changing the relay means pairing again.
+//!   account "mailbox-v2"                       v2 pairing string (topic + key + mailbox URL).
+//!
+//! Nothing in here logs secrets. The v1 token never reaches the webview; the v2 pairing string
+//! only does when the user asks to see/copy the paste line.
 
 use keyring::Entry;
 
@@ -60,6 +64,36 @@ pub fn set(relay: &url::Url, token: &str) -> Result<(), String> {
 
 pub fn delete(relay: &url::Url) -> Result<(), String> {
     match entry(relay)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(format!("keychain delete failed: {}", kind(&e))),
+    }
+}
+
+// ---------------------------------------------------------------- v2 pairing
+
+pub const V2_ACCOUNT: &str = "mailbox-v2";
+
+fn v2_entry() -> Result<Entry, String> {
+    Entry::new(SERVICE, V2_ACCOUNT).map_err(|e| format!("keychain unavailable: {}", kind(&e)))
+}
+
+/// The stored v2 pairing, if any (an unparsable entry counts as none).
+pub fn v2_get() -> Result<Option<crate::v2::Pairing>, String> {
+    match v2_entry()?.get_password() {
+        Ok(s) => Ok(crate::v2::Pairing::decode(&s).ok()),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(format!("keychain read failed: {}", kind(&e))),
+    }
+}
+
+pub fn v2_set(p: &crate::v2::Pairing) -> Result<(), String> {
+    v2_entry()?
+        .set_password(&p.encode())
+        .map_err(|e| format!("keychain write failed: {}", kind(&e)))
+}
+
+pub fn v2_delete() -> Result<(), String> {
+    match v2_entry()?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(format!("keychain delete failed: {}", kind(&e))),
     }

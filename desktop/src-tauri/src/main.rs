@@ -1,16 +1,26 @@
 // Desk Pet for Grok Bot (unofficial, working title).
 //
 // Rust side: the transparent always-on-top window, window-position memory, the opener plugin,
-// and the relay client (HTTP + SSE) with the token kept in the macOS Keychain. The webview
-// gets status/state events and never sees the token.
+// the v1 relay client (HTTP + SSE, token in the macOS Keychain) and the v2 mailbox client
+// (ntfy SSE + XChaCha20-Poly1305, pairing in the Keychain). The webview gets status/state
+// events; it never sees the v1 token, and sees the v2 pairing string only to show/copy it.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod mailbox;
 mod relay;
 mod secrets;
+mod v2;
 mod window_state;
 
-use relay::{PairStartOut, RelayState};
-use tauri::{AppHandle, Manager, State};
+use std::sync::{Arc, Mutex};
+
+use relay::{PairStartOut, RelayState, StreamHandle};
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, Manager, State};
+
+/// The v2 mailbox subscription (independent of the v1 relay stream: both can run).
+#[derive(Default)]
+struct MailboxState(Mutex<Option<StreamHandle>>);
 
 /// Shared HTTP client (connection pool, TLS via the OS).
 struct Http(reqwest::Client);
@@ -109,11 +119,110 @@ fn relay_reconnect_now(st: State<'_, RelayState>) {
     }
 }
 
+// ---------------------------------------------------------------- v2 (mailbox) commands
+
+#[derive(Serialize)]
+struct V2Status {
+    paired: bool,
+    /// Mailbox host (not secret), e.g. "ntfy.sh".
+    mailbox: Option<String>,
+}
+
+fn host_of(base: &str) -> Option<String> {
+    url::Url::parse(base).ok().and_then(|u| u.host_str().map(str::to_string))
+}
+
+/// Validate a mailbox base URL; returns its normalised form.
+#[tauri::command]
+fn v2_normalize_url(mailbox_url: String) -> Result<String, String> {
+    v2::normalize_mailbox_url(&mailbox_url)
+}
+
+#[tauri::command]
+async fn v2_status() -> Result<V2Status, String> {
+    let p = blocking(secrets::v2_get).await?;
+    Ok(V2Status { paired: p.is_some(), mailbox: p.and_then(|p| host_of(&p.base)) })
+}
+
+fn start_mailbox(app: &AppHandle, http: &reqwest::Client, st: &MailboxState, p: v2::Pairing) {
+    let a = app.clone();
+    let sink: mailbox::Sink = Arc::new(move |o| match o {
+        mailbox::Out::Status { status, detail } => {
+            let _ = a.emit("mailbox:status", mailbox::status_json(status, detail));
+        }
+        mailbox::Out::State(v) => {
+            let _ = a.emit("mailbox:state", v);
+        }
+    });
+    let mut slot = st.0.lock().unwrap();
+    if let Some(h) = slot.take() {
+        h.stop();
+    }
+    *slot = Some(mailbox::start(http.clone(), p, sink));
+}
+
+/// New v2 pairing: fresh random topic + key, stored in the keychain (replacing any old one),
+/// subscription started immediately. Returns the pairing string for the paste line.
+#[tauri::command]
+async fn v2_pair_new(
+    app: AppHandle,
+    http: State<'_, Http>,
+    st: State<'_, MailboxState>,
+    mailbox_url: String,
+) -> Result<String, String> {
+    let p = v2::Pairing::generate(&mailbox_url)?;
+    let p2 = p.clone();
+    blocking(move || secrets::v2_set(&p2)).await?;
+    start_mailbox(&app, &http.0, &st, p.clone());
+    Ok(p.encode())
+}
+
+/// The current pairing string (to show the paste line again, e.g. for another bot computer).
+#[tauri::command]
+async fn v2_pairing_code() -> Result<Option<String>, String> {
+    Ok(blocking(secrets::v2_get).await?.map(|p| p.encode()))
+}
+
+/// Start (or restart) the subscription. Ok(false) if there is no v2 pairing.
+#[tauri::command]
+async fn v2_stream_start(app: AppHandle, http: State<'_, Http>, st: State<'_, MailboxState>) -> Result<bool, String> {
+    let Some(p) = blocking(secrets::v2_get).await? else {
+        return Ok(false);
+    };
+    start_mailbox(&app, &http.0, &st, p);
+    Ok(true)
+}
+
+#[tauri::command]
+fn v2_stream_stop(st: State<'_, MailboxState>) {
+    if let Some(h) = st.0.lock().unwrap().take() {
+        h.stop();
+    }
+}
+
+/// Unpair v2: stop and delete topic + key. Bots still holding the old code publish into a
+/// topic nobody reads any more; a new code is a new topic and key.
+#[tauri::command]
+async fn v2_unpair(st: State<'_, MailboxState>) -> Result<(), String> {
+    if let Some(h) = st.0.lock().unwrap().take() {
+        h.stop();
+    }
+    blocking(secrets::v2_delete).await
+}
+
+#[tauri::command]
+fn v2_reconnect_now(st: State<'_, MailboxState>) {
+    if let Some(h) = st.0.lock().unwrap().as_ref() {
+        h.kick();
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(Http(relay::http_client()))
         .manage(RelayState::default())
+        .manage(MailboxState::default())
         .invoke_handler(tauri::generate_handler![
             relay_normalize_url,
             relay_has_token,
@@ -124,6 +233,14 @@ fn main() {
             relay_stream_start,
             relay_stream_stop,
             relay_reconnect_now,
+            v2_normalize_url,
+            v2_status,
+            v2_pair_new,
+            v2_pairing_code,
+            v2_stream_start,
+            v2_stream_stop,
+            v2_unpair,
+            v2_reconnect_now,
         ])
         .setup(|app| {
             // A desk pet should not take a Dock slot or the app switcher on macOS.
