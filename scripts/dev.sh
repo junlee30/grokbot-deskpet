@@ -16,8 +16,8 @@ need_deps() { [[ -d "$1/node_modules" ]] || (cd "$1" && npm install --no-audit -
 case "${1:-relay}" in
   relay)
     need_deps "$ROOT/relay"
-    # The native app talks to the relay from Rust (no CORS needed). Only the browser prototype
-    # (vite on :1420) needs CORS, so dev allows exactly that origin.
+    # The Desk Pet app no longer connects to a relay (it is v2 only); this is for self-hosters.
+    # CORS allows the old browser-prototype origins (vite on :1420) by default.
     cd "$ROOT/relay" && PORT="${PORT:-8787}" \
       DESKPET_CORS_ORIGINS="${DESKPET_CORS_ORIGINS:-http://localhost:1420,http://127.0.0.1:1420}" \
       exec npm start --silent

@@ -71,12 +71,12 @@ desktop/    Tauri v2 app; frontend is Vite + TypeScript, no framework
   src/avatar.ts           avatar logic: strip tinting, face cadence, state cues, geometry (pure, tested)
   src/avatar-bank.ts      loads public/grokbot-art/ (gitignored, imported) and draws avatars
   src/presence.ts         what the pet bubble shows: toast vs persistent working label (pure, tested)
-  src/connections.ts      status merge, boot view, paste lines, settings migration (pure, tested)
+  src/connections.ts      status line, boot view, paste line, old-settings clean-up (pure, tested)
   src-tauri/src/v2.rs     v2 pairing string, XChaCha20-Poly1305 envelope, validation, replay guard
   src-tauri/src/mailbox.rs  v2 ntfy SSE client (since=, backoff, wake detection)
-  src-tauri/src/secrets.rs  Keychain (keyring crate)
+  src-tauri/src/secrets.rs  Keychain (keyring crate), one-time v1 token clean-up
+  src-tauri/src/stream.rs  HTTP client, SSE parser, backoff, wake detection
   src-tauri/src/window_state.rs  window position memory
-  src-tauri/src/relay.rs  deprecated v1 relay client (self-hosted relays only)
 skill/SKILL.md            Grok Bot skill: pairing, when/how to post status (+ avatar)
 skill/deskpet-publish     bot-side publisher (Node stdlib; tests in skill/test/)
 scripts/fake-ntfy.mjs     local stand-in for ntfy (tests, e2e)
@@ -84,7 +84,7 @@ scripts/e2e-v2.sh         publisher → mailbox → Rust pet client, local fake 
 scripts/import-grokbot-art.mjs  copies Grok Bot avatar art + palette from the installed app
 scripts/demo.sh           fake bots (Jarvis, Claude, Scout) cycling through states
 scripts/dev.sh            tauri dev / web prototype / (deprecated) relay
-relay/                    DEPRECATED v1 relay, kept for self-hosters (see relay/README.md)
+relay/                    DEPRECATED v1 relay, kept for self-hosters; the app no longer uses it
 ```
 
 ## Desk Pet v2: private mailbox
@@ -176,11 +176,11 @@ On ntfy.sh it uses about 17 of the day's ~250 messages for your IP.
 Tests:
 
 ```bash
-cd desktop && npm test         # node:test: toast/pet layout, URL validation, backoff, avatar states,
-                               #   working label, connections + v1 deprecation migration
+cd desktop && npm test         # node:test: toast/pet layout, mailbox URL validation, avatar states,
+                               #   working label, connection status + old v1 settings clean-up
 cd desktop && npm run build    # tsc + vite build
 cd desktop/src-tauri && cargo test   # v2 pairing/envelope/replay/validation, mailbox client + reconnect,
-                                     #   SSE parser, backoff, URL validation, keychain naming, window clamp
+                                     #   SSE parser, backoff, v1 clean-up never touches v2, window clamp
 node --test skill/test/*.test.mjs    # publisher: crypto vectors, pairing, throttling, CLI vs fake ntfy
 scripts/e2e-v2.sh                    # publisher → fake ntfy → Rust pet client (add --real for ntfy.sh)
 cd relay && npm test                 # deprecated v1 relay (self-hosting)
@@ -244,13 +244,11 @@ for app icons).
   - Reconnects immediately on wake from sleep (the Rust side detects the wall-clock jump), on
     the `online` event and when the window becomes visible.
 - **Settings** (⚙):
-  - The v2 row: `paired · ntfy.sh` (plus `· no bot yet` until a bot posts), **Show code** (for
+  - The pairing row: `Paired · ntfy.sh` (plus `· no bot yet` until a bot posts), **Show code** (for
     another bot computer), **New code** (needs a second click: new topic and key, old bots go
     unheard), **Unpair** (deletes topic and key); **Pair** when nothing is paired.
   - **Mailbox URL**: `https://ntfy.sh` (chip) or your own ntfy; it applies to the next new code.
   - **Click opens**, **Per-bot links**, **Pet size**.
-  - **Legacy: self-hosted relay (deprecated)**, collapsed: see
-    [Deprecated: self-hosted relay](#deprecated-self-hosted-relay).
 - Click (not drag) a pet → opens its URL via `tauri-plugin-opener` (capability allows only
   `http(s)://*`). Configure in `desktop/public/deskpet.config.json`
   (`openUrls.default`, `openUrls.agents.{agent_id}`) or in the settings panel. Default
@@ -264,11 +262,12 @@ for app icons).
   never logged, and never echoed in an error.
 - Unsigned debug builds get a new code signature on every rebuild. macOS may then ask once
   per build whether the app may use its Keychain item ("Always Allow").
-- **v1 clean-up.** On startup the app deletes a v1 token stored for the retired hosted relay
-  (account `relay-token:grokbot-deskpet-relay.fly.dev`) and drops that relay from its saved
-  settings, so it never tries to connect there again. It writes one line to
-  `~/Library/Logs/dev.deskpet.grokbot/deskpet.log` (nothing secret). The v2 entry is not
-  touched.
+- **v1 clean-up.** The app no longer has any v1 (relay) code. Once, on the first launch of
+  this version, it deletes every leftover v1 token (accounts `relay-token:*`) from the Keychain
+  and drops the old v1 fields from its saved settings. If it removed anything it writes one
+  line with a count to `~/Library/Logs/dev.deskpet.grokbot/deskpet.log` (nothing secret). When
+  it has succeeded it leaves `v1-cleanup.done` in the app's data folder and never runs again.
+  The v2 entry is not read, written or deleted.
 
 ## Security notes
 
@@ -291,11 +290,11 @@ v1 (a Desk Pet relay server with `XXX-XXX` pairing codes) is **deprecated**, and
 relay has been shut down. The Grok Bot skill no longer pairs v1 codes; a bot given one tells
 the user to make a new code in Desk Pet (⚙ → **Pair**).
 
-The relay code stays in `relay/` for people who want to run their own; the desktop app still
-supports it under ⚙ → **Legacy: self-hosted relay (deprecated)** (collapsed; enter your relay's
-URL, then **Pair**). With no relay set, v1 is fully off: no connections, no retries. Setup,
-API and the bot-side steps: [relay/README.md](relay/README.md).
-`scripts/demo.sh --v1` with `RELAY_URL=<your relay>` plays the fake bots against it.
+The relay code stays in `relay/` for reference and for people who run their own, but the
+desktop app no longer connects to any relay: it is v2 only. Setup, API and the bot-side
+steps: [relay/README.md](relay/README.md).
+`scripts/demo.sh --v1` with `RELAY_URL=<your relay>` still posts fake bots to a relay, for
+testing the relay itself; the pet doesn't show them.
 
 ## Grok Bot avatar art (import, not committed)
 
