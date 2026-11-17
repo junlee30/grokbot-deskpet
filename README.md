@@ -31,10 +31,15 @@ never ships it). Without Grok Bot, pets are an original pixel-art robot in each 
 ## Quick start
 
 1. Open Desk Pet and click **Connect your Grok Bot**. It shows
-   `Install the Desk Pet skill and pair with code dp2.…`. Click **Copy**.
-2. Paste that line to your Grok Bot. It follows [`skill/SKILL.md`](skill/SKILL.md): installs
-   a small publisher script, pairs, sets itself up from its Grok Bot profile, and says hello.
+   `Install the Desk Pet skill from https://…/SKILL.md and pair with code dp2.…`.
+   Click **Copy**.
+2. Paste that line to your Grok Bot. Nothing to download or upload: the bot reads the skill
+   ([`skill/SKILL.md`](skill/SKILL.md)) from the link, installs a small publisher script
+   (fetched from this repo and checked against a pinned SHA-256), pairs, sets itself up from
+   its Grok Bot profile, and says hello.
 3. The bot's pet appears within about a second.
+
+To add Desk Pet to your Grok Bot skill library instead, use ⚙ → **Copy Skill Link**.
 
 The same code works for any number of bots and bot computers (menu bar icon → **Settings…**
 → **Show code**). It is the key to your pets: share it only with your bots.

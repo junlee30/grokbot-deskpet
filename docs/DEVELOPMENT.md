@@ -101,9 +101,15 @@ sample bubbles) or `preview.html?controls` (the control window's views, with a f
 ## Releasing
 
 1. Bump the version in `desktop/src-tauri/tauri.conf.json`, `desktop/src-tauri/Cargo.toml` and
-   `desktop/package.json`. If `skill/deskpet-publish` changed, bump its `VERSION` and
-   `publisher_version` in `protocol/v2.json` together (tests fail otherwise); pets then ask
-   bots on the older publisher to update.
+   `desktop/package.json`.
+   **If `skill/` changed** (the publisher or SKILL.md), bump the skill version everywhere it
+   appears, and the tests fail until they all agree: `VERSION` in `skill/deskpet-publish`,
+   `publisher_version` in `protocol/v2.json`, `DP_VERSION` and `DP_SHA256`
+   (`shasum -a 256 skill/deskpet-publish`) in `skill/SKILL.md`, and `SKILL_VERSION` in
+   `desktop/src/connections.ts`. After merging, push the tag `skill-v<version>`: bots
+   download SKILL.md and the publisher from that tag, and the app's paste line and
+   **Copy Skill Link** point at it. Never move an existing `skill-v…` tag. Pets ask bots on an
+   older publisher to update.
 2. Push a tag `v<version>`. `.github/workflows/release.yml` checks the tag matches, builds a
    universal (Apple silicon + Intel) `.app` and `.dmg` with no Grok Bot art (the app copies it
    from the user's Grok Bot at runtime; the workflow fails if any reaches the bundle), and attaches the `.dmg` to a **draft** GitHub release. Publish the
