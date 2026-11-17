@@ -397,7 +397,7 @@ button > svg {
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 16px;
-  max-height: 64px; /* 4 lines; the rest scrolls */
+  max-height: 96px; /* 6 lines (the skill link and the code); the rest scrolls */
   overflow: auto;
   overflow-wrap: anywhere;
   word-break: break-all;

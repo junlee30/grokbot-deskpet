@@ -117,7 +117,7 @@ The UI follows Apple's HIG for menu bar extras, app icons, Dark Mode, typography
     unheard), **Unpair** (also a second click; deletes topic and key); **Pair** when nothing is
     paired.
   - **Mailbox**: `https://ntfy.sh` (button) or your own ntfy; it applies to the next new code.
-  - **Pet size** (Large / Small), **Notifications** (on by default), **Reset Pet Positions**;
+  - **Pet size** (Large / Small), **Alerts** ("Notify me when a bot needs me", on by default), **Reset Pet Positions**;
     **Quit Desk Pet** and the version at the bottom.
 - **Needs you.** When a pet starts showing `needs_you` from a fresh event, macOS shows a
   notification ("Jarvis needs you" and the bot's message), and the menu bar icon shows how

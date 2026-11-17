@@ -2,7 +2,7 @@
 // bot has posted. Every bot is drawn in its own window (pet.html, src/pet-main.ts), opened and
 // placed by the Rust side; this window hides itself while only the pets are needed.
 import { loadConfig, saveSettings, v2State, type DeskPetConfig } from "./config.ts";
-import { bootView, headerStatus, pasteLineV2, type Conn } from "./connections.ts";
+import { bootView, headerStatus, pasteLineV2, SKILL_URL, type Conn } from "./connections.ts";
 import type { ConnStatus, StateEvent } from "./events.ts";
 import { CHECK_SVG, GEAR_SVG, LOCK_SVG } from "./icons.ts";
 import { controlWindowSize, petWindowSize, type PetSize } from "./layout.ts";
@@ -67,6 +67,11 @@ app.innerHTML = `
           </div>
         </div>
         <div class="row">
+          <span class="label">Skill</span>
+          <div class="value"><button type="button" class="small" id="s-skill" title="${SKILL_URL}">Copy Skill Link</button></div>
+          <div class="note" id="s-skill-note"></div>
+        </div>
+        <div class="row">
           <label class="label" for="s-mailbox">Mailbox</label>
           <div class="value">
             <input id="s-mailbox" spellcheck="false" autocomplete="off" />
@@ -84,7 +89,7 @@ app.innerHTML = `
           </div>
         </div>
         <div class="row">
-          <span class="label">Notifications</span>
+          <span class="label">Alerts</span>
           <div class="value"><label class="check"><input type="checkbox" id="s-notify" /><span>Notify me when a bot needs me</span></label></div>
         </div>
         <div class="row">
@@ -317,6 +322,7 @@ async function openSettings(): Promise<void> {
   for (const r of sizeRadios()) r.checked = r.value === cfg.petSize;
   $<HTMLInputElement>("s-notify").checked = cfg.notifyNeedsYou;
   $("s-reset-note").textContent = "";
+  $("s-skill-note").textContent = "";
   disarm($<HTMLButtonElement>("s-v2-new"), "New code");
   disarm($<HTMLButtonElement>("s-v2-unpair"), "Unpair");
   await refreshConnRows();
@@ -366,6 +372,14 @@ $("s-reset-pos").addEventListener("click", () => {
   fitWindow();
 });
 $("s-save").addEventListener("click", () => void saveSettingsFromForm());
+// For adding Desk Pet to the Grok Bot skill library by hand, or giving it to a bot to update.
+$("s-skill").addEventListener("click", async () => {
+  const ok = await copyText(SKILL_URL);
+  $("s-skill-note").textContent = ok
+    ? "Copied. Add it to your Grok Bot skill library, or send it to a bot to update its Desk Pet skill."
+    : SKILL_URL;
+  fitWindow();
+});
 $("s-ntfy").addEventListener("click", () => ($<HTMLInputElement>("s-mailbox").value = DEFAULT_MAILBOX));
 /**
  * Destructive buttons take a second click: the first one arms it ("Sure? …") for 4 s.

@@ -2,7 +2,10 @@
 // validation, and dropping what older versions saved for v1.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { bootView, looksLikeDp2, pasteLineV2, headerStatus } from "../src/connections.ts";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { bootView, looksLikeDp2, pasteLineV2, headerStatus, SKILL_URL, SKILL_VERSION } from "../src/connections.ts";
 import { DEFAULT_MAILBOX, validateMailboxUrl } from "../src/net.ts";
 
 describe("headerStatus", () => {
@@ -34,7 +37,8 @@ describe("bootView", () => {
 describe("v2 paste line and code shape", () => {
   const code = "dp2.AgABAgMEBQYHCAkKCwwNDg-AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en5N--3c";
   it("paste line", () => {
-    assert.equal(pasteLineV2(code), `Install the Desk Pet skill and pair with code ${code}`);
+    assert.equal(pasteLineV2(code), `Install the Desk Pet skill from ${SKILL_URL} and pair with code ${code}`);
+    assert.ok(pasteLineV2(code).endsWith(code), "the code ends the line (a sentence dot after it is tolerated)");
     assert.ok(looksLikeDp2(code));
     assert.ok(!looksLikeDp2("K7Q-42M"));
     assert.ok(!looksLikeDp2(`${code} rm -rf`));
@@ -51,5 +55,17 @@ describe("validateMailboxUrl", () => {
     for (const bad of ["http://ntfy.example.com", "https://u:p@ntfy.sh", "https://ntfy.sh/?x=1", "https://ntfy.sh/#a", "ftp://x", "nope"]) {
       assert.equal(validateMailboxUrl(bad).ok, false, bad);
     }
+  });
+});
+
+describe("skill link", () => {
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+  it("points at SKILL.md for the current publisher, on the tag the skill downloads from", () => {
+    const protocol = JSON.parse(fs.readFileSync(path.join(root, "protocol", "v2.json"), "utf8"));
+    assert.equal(SKILL_VERSION, protocol.publisher_version, "bump SKILL_VERSION with publisher_version");
+    assert.equal(SKILL_URL, `https://raw.githubusercontent.com/junlee30/grokbot-deskpet/skill-v${SKILL_VERSION}/skill/SKILL.md`);
+    const skill = fs.readFileSync(path.join(root, "skill", "SKILL.md"), "utf8");
+    assert.ok(skill.includes(`DP_VERSION=${SKILL_VERSION}`), "SKILL.md installs the same version");
+    assert.ok(skill.includes(SKILL_URL.replace(`skill-v${SKILL_VERSION}`, "skill-v$DP_VERSION").replace("SKILL.md", "deskpet-publish")), "same repo and tag");
   });
 });

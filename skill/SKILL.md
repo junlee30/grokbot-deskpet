@@ -1,6 +1,6 @@
 ---
 name: desk-pet
-description: Show this Grok Bot as a pixel-art pet on the user's desktop, drawn as its own Grok Bot profile picture (avatarShape/avatarColor); clicking the pet opens this bot's chat in the Grok Bot app. Use when the user says "Install the Desk Pet skill and pair with code dp2.…" to pair once (private, end-to-end encrypted mailbox), and during every turn to post short lifecycle status (thinking, working, juggling, needs_you, done, error). Never sends prompts, replies, tool arguments, file contents or secrets.
+description: Show this Grok Bot as a pixel-art pet on the user's desktop, drawn as its own Grok Bot profile picture (avatarShape/avatarColor); clicking the pet opens this bot's chat in the Grok Bot app. Use when the user says "Install the Desk Pet skill (from <link>) and pair with code dp2.…" to pair once (private, end-to-end encrypted mailbox), and during every turn to post short lifecycle status (thinking, working, juggling, needs_you, done, error). Never sends prompts, replies, tool arguments, file contents or secrets.
 ---
 
 # Desk Pet
@@ -19,24 +19,48 @@ decrypts. There is no Desk Pet server; the mailbox only sees ciphertext.
 Status is best-effort decoration. **It must never slow down, block or break your real work.**
 Every post gives up after about 3 seconds and ignores failures.
 
+**Got this skill as a link?** The user's paste line looks like `Install the Desk Pet skill
+from https://…/SKILL.md and pair with code dp2.…`. Read this file from that link, add it to
+your skill library as the `desk-pet` skill if you can (otherwise keep it with your standing
+instructions, so you follow it in every session), then follow section 1.
+
 ## 1. Pairing (once): `dp2.` codes
 
 Trigger: the user says something like
-`Install the Desk Pet skill and pair with code dp2.AgAB…` (one long word starting `dp2.`).
+`Install the Desk Pet skill from https://…/SKILL.md and pair with code dp2.AgAB…` (the code
+is one long word starting `dp2.`; older lines leave out the link).
 
 **The dp2 code is a secret** (it contains the encryption key). Never echo it back, never put it
 in a file other than the one below, in memory notes, in chat, or on a process command line.
 
-1. Install (or update) the publisher. It is the file `deskpet-publish` next to this SKILL.md
-   (a single Node.js script, standard library only; needs `node` 12 or newer and uses `curl`
-   when present). All bots on this computer share it. Run this **at the start of every
-   session** too, so a newer copy of this skill updates it:
+1. Install (or update) the publisher, `deskpet-publish`: a single Node.js script (standard
+   library only; needs `node` 12 or newer, and `curl`). All bots on this computer share it.
+   Run this **at the start of every session** too: it does nothing when the right version is
+   already installed. It uses the copy next to this SKILL.md if you have one, otherwise it
+   downloads the pinned version from GitHub, and it installs only a file whose SHA-256
+   matches:
 
    ```bash
+   DP_VERSION=2.1.0
+   DP_SHA256=2eabee2652781f4773fa0bce84d41b46e9c34b5bedefdd6da4c3a2888e9a1651
+   DP_URL="https://raw.githubusercontent.com/junlee30/grokbot-deskpet/skill-v$DP_VERSION/skill/deskpet-publish"
+   DP_LOCAL="<this skill's folder>/deskpet-publish"
+   dp_ok() { node -e 'const [f, h] = process.argv.slice(1); const d = require("crypto").createHash("sha256").update(require("fs").readFileSync(f)).digest("hex"); process.exit(d === h ? 0 : 1)' "$1" "$DP_SHA256"; }
    mkdir -p ~/.deskpet && chmod 700 ~/.deskpet
-   cmp -s "<this skill's folder>/deskpet-publish" ~/.deskpet/deskpet-publish ||
-     install -m 700 "<this skill's folder>/deskpet-publish" ~/.deskpet/deskpet-publish
+   if [ "$(~/.deskpet/deskpet-publish --version 2>/dev/null)" != "deskpet-publish $DP_VERSION" ]; then
+     dp_tmp="$(mktemp)"
+     if { cp "$DP_LOCAL" "$dp_tmp" 2>/dev/null && dp_ok "$dp_tmp"; } ||
+        { curl -fsSL --max-time 30 "$DP_URL" -o "$dp_tmp" && dp_ok "$dp_tmp"; }; then
+       install -m 700 "$dp_tmp" ~/.deskpet/deskpet-publish && echo "Desk Pet publisher $DP_VERSION installed"
+     else
+       echo "Desk Pet: couldn't get a verified publisher $DP_VERSION; nothing installed" >&2
+     fi
+     rm -f "$dp_tmp"
+   fi
    ```
+
+   If it says it couldn't get a verified publisher, tell the user (once) and skip Desk Pet for
+   now: never install a file that failed the check.
 
 2. Pair: give it the code on **stdin** (a shell builtin like `printf` doesn't show up in `ps`):
 
@@ -190,7 +214,8 @@ Desk Pet is an unofficial side project, not an xAI product.
 
 ## 7. Updates and old codes
 
-- If the pet says your publisher is out of date, run step 1 of section 1 again.
+- If the pet says your publisher is out of date, get the newest Desk Pet skill (the user's
+  Desk Pet app has it: ⚙ → **Copy Skill Link**) and run step 1 of section 1 again.
 - Codes like `K7Q-42M` (`XXX-XXX`) are from an old version of Desk Pet that no longer works.
   Don't pair or install anything: ask the user to click ⚙ → **Pair** in Desk Pet for a new
   code (it starts with `dp2.`).

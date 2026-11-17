@@ -3,7 +3,8 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -457,5 +458,72 @@ describe("CLI against a fake ntfy", () => {
     assert.ok(!fs.existsSync(path.join(home, "pairing")));
     const s = await run(["jarvis", "Jarvis", "idle", "x"], { env: env() });
     assert.match(s.stderr, /not paired/);
+  });
+});
+
+describe("SKILL.md install step", () => {
+  const skill = fs.readFileSync(path.join(here, "..", "SKILL.md"), "utf8");
+  const start = skill.indexOf("   ```bash\n   DP_VERSION=");
+  const block = skill
+    .slice(start, skill.indexOf("   ```\n", start + 10))
+    .split("\n")
+    .slice(1)
+    .map((l) => l.replace(/^ {3}/, ""))
+    .join("\n");
+  const field = (k) => new RegExp(`^${k}=(.*)$`, "m").exec(block)?.[1].replace(/^"|"$/g, "");
+  const publisher = fs.readFileSync(SCRIPT);
+
+  test("pins this publisher: version, SHA-256 and the GitHub tag", () => {
+    assert.ok(start > 0, "the install block is in SKILL.md");
+    assert.equal(field("DP_VERSION"), m.VERSION, "bump DP_VERSION in SKILL.md with VERSION");
+    assert.equal(field("DP_SHA256"), crypto.createHash("sha256").update(publisher).digest("hex"), "update DP_SHA256 in SKILL.md");
+    assert.equal(field("DP_URL"), "https://raw.githubusercontent.com/junlee30/grokbot-deskpet/skill-v$DP_VERSION/skill/deskpet-publish");
+  });
+
+  test("installs only a verified publisher: download, local copy, stale copy, tampered file", async () => {
+    let body = publisher;
+    const server = http.createServer((req, res) => (body ? res.end(body) : ((res.statusCode = 404), res.end())));
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    const url = `http://127.0.0.1:${server.address().port}/deskpet-publish`;
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "deskpet-skill-"));
+    const local = path.join(home, "skill-folder", "deskpet-publish");
+    fs.mkdirSync(path.dirname(local));
+    const script = block.replace(/^DP_URL=.*$/m, `DP_URL="${url}"`).replace(/^DP_LOCAL=.*$/m, `DP_LOCAL="${local}"`);
+    const installed = path.join(home, ".deskpet", "deskpet-publish");
+    // Async: the mailbox stand-in above runs in this process and must keep answering.
+    const run = () =>
+      new Promise((resolve) =>
+        execFile("bash", ["-c", script], { env: { PATH: process.env.PATH, HOME: home }, timeout: 20_000 }, (err, stdout, stderr) =>
+          resolve({ out: `${stdout}${stderr}`, code: err ? (err.code ?? 1) : 0 }),
+        ),
+      );
+    try {
+      // Nothing local: downloaded, verified, installed 0700.
+      assert.match((await run()).out, /publisher 2\.\d+\.\d+ installed/);
+      assert.equal(execFileSync(installed, ["--version"]).toString().trim(), `deskpet-publish ${m.VERSION}`);
+      assert.equal(fs.statSync(installed).mode & 0o777, 0o700);
+      // Already the right version: nothing to do, nothing fetched.
+      body = null;
+      assert.equal((await run()).out, "");
+      // A good copy next to SKILL.md works without the network.
+      fs.rmSync(installed);
+      fs.copyFileSync(SCRIPT, local);
+      assert.match((await run()).out, /installed/);
+      // A stale local copy (an older zip) fails the check and is replaced by the download.
+      fs.rmSync(installed);
+      fs.writeFileSync(local, "#!/usr/bin/env node\nconsole.log('old')\n");
+      body = publisher;
+      assert.match((await run()).out, /installed/);
+      assert.equal(execFileSync(installed, ["--version"]).toString().trim(), `deskpet-publish ${m.VERSION}`);
+      // A tampered download is never installed.
+      fs.rmSync(installed);
+      body = Buffer.concat([publisher, Buffer.from("\n// evil\n")]);
+      const r = await run();
+      assert.match(r.out, /couldn't get a verified publisher/);
+      assert.ok(!fs.existsSync(installed));
+    } finally {
+      server.close();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });

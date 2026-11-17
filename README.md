@@ -62,7 +62,7 @@ Menu bar icon → **Settings…** (or right-click a pet, or the small ⚙ next t
 - **Pairing**: **Show code** (for another bot computer), **New code** (old bots go unheard),
   **Unpair**.
 - **Mailbox**: `https://ntfy.sh` or your own ntfy server; used for the next new code.
-- **Pet size**: Large or Small. **Notifications**: on or off. **Reset Pet Positions**.
+- **Pet size**: Large or Small. **Alerts**: notify me when a bot needs me. **Reset Pet Positions**.
 
 ## Privacy
 

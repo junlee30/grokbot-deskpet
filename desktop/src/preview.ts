@@ -8,6 +8,7 @@ import { Pet } from "./pets.ts";
 import { SpriteBank } from "./sprites.ts";
 import { AvatarBank } from "./avatar-bank.ts";
 import { LOCK_SVG } from "./icons.ts";
+import { pasteLineV2 } from "./connections.ts";
 
 interface Sample {
   caption: string;
@@ -98,7 +99,7 @@ function showView(doc: Document, view: (typeof VIEWS)[number]): void {
   }
   if (view === "pair-code") {
     $("pair-code")!.hidden = false;
-    $("paste-line")!.textContent = `Install the Desk Pet skill and pair with code ${FAKE_CODE}`;
+    $("paste-line")!.textContent = pasteLineV2(FAKE_CODE);
     $("pair-note")!.textContent = "It works for any number of bots. The code is the key to your pets: share it only with your own bots.";
   }
   if (view === "waiting") {
@@ -114,7 +115,8 @@ function showView(doc: Document, view: (typeof VIEWS)[number]): void {
     ($("s-mailbox") as HTMLInputElement).value = "https://ntfy.sh";
     $("s-mailbox-note")!.textContent = "Used for the next new code.";
     (doc.querySelector('input[name="s-size"][value="large"]') as HTMLInputElement).checked = true;
-    $("s-version")!.textContent = "Version 0.2.0";
+    (doc.getElementById("s-notify") as HTMLInputElement).checked = true;
+    $("s-version")!.textContent = "Version 0.3.0";
   }
 }
 
