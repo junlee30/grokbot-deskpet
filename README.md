@@ -6,95 +6,85 @@ A tiny always-on-top desktop pet that shows **one pixel-art Grok Bot per bot** a
 from the bots' lifecycle status: thinking, working, juggling helpers, waiting on you, done,
 error, sleeping. Click a pet to open its link (default `https://grok.com`).
 
-Status: **v2** (M4–M6): **local-first, zero server cost.** By default the pet and its bots talk
-through a free public **ntfy.sh** topic with **end-to-end encryption**: no Desk Pet server at
-all. The v1 relay (**0.3.0**; the hosted one still runs 0.2.0 until it is redeployed) keeps
-working as an optional fallback, and both can run at once. The native macOS app keeps its
-secrets (v1 token, v2 topic + key) in the Keychain. Original code and art, Apache-2.0 (see
-`LICENSE`). The Grok Bot avatar art is **not** in this repo: it is copied from your installed
-Grok Bot app at build time (see below).
+Status: **v2**: **local-first, zero server cost.** The pet and its bots talk through a free
+public **ntfy.sh** topic (or your own ntfy) with **end-to-end encryption**: there is no Desk Pet
+server at all. The native macOS app keeps its secret (the v2 topic + key) in the Keychain.
+Original code and art, Apache-2.0 (see `LICENSE`). The Grok Bot avatar art is **not** in this
+repo: it is copied from your installed Grok Bot app at build time (see below).
 
-What v2 adds:
+> The v1 relay is **deprecated** and the hosted relay has been shut down. See
+> [Deprecated: self-hosted relay](#deprecated-self-hosted-relay).
 
-- **Private mailbox pairing.** "Connect your Grok Bot" creates a `dp2.…` code (128-bit random
-  ntfy topic + 256-bit key + optional self-hosted ntfy URL + checksum, base64url). The bot runs
-  the bundled `skill/deskpet-publish` (one Node script, stdlib only) which encrypts each status
-  with **XChaCha20-Poly1305** and POSTs it to the topic. The pet subscribes to the topic over
-  SSE in Rust, decrypts, and drops forgeries, replays (per bot+session `seq`), events more than
-  10 minutes off and oversize bodies. Details: [Desk Pet v2](#desk-pet-v2-private-mailbox).
-- **Both at once.** An existing v1 pairing keeps working; v2 can be added from Settings. Pets
-  from both are merged by `agent_id`.
-- `scripts/demo.sh` takes a dp2 code (`pbpaste | scripts/demo.sh -`), `scripts/e2e-v2.sh`
-  runs publisher → mailbox → pet client against a local fake ntfy or the real ntfy.sh.
+## Quick start
 
-What M2 added:
+1. Build and open the desktop app (see [Running it](#running-it)).
+2. Click **Connect your Grok Bot** (or ⚙ → **Pair**). The app shows
+   `Install the Desk Pet skill and pair with code dp2.…`. Click **Copy**.
+3. Paste that line to your Grok Bot. It follows `skill/SKILL.md`: installs the bundled
+   publisher, pairs, and says hello. The bot's pet appears within about a second.
 
+The same code works for any number of bots and bot computers (⚙ → **Show code**). It is the
+key to your pet: share it only with your bots.
+
+## Features
+
+- **Private mailbox pairing.** A `dp2.…` code (128-bit random ntfy topic + 256-bit key +
+  optional self-hosted ntfy URL + checksum, base64url). The bot runs the bundled
+  `skill/deskpet-publish` (one Node script, stdlib only), which encrypts each status with
+  **XChaCha20-Poly1305** and POSTs it to the topic. The pet subscribes over SSE in Rust,
+  decrypts, and drops forgeries, replays (per bot+session `seq`), events more than 10 minutes
+  off and oversize bodies. Details: [Desk Pet v2](#desk-pet-v2-private-mailbox).
 - **Each bot looks like its own Grok Bot profile picture.** Bots send an optional
-  `avatar: {shape, color}` (their profile's `avatarShape` / `avatarColor`). The relay validates
-  it against the 26 shapes and 11 colours and keeps the latest avatar per bot. The desktop draws
-  that shape in that colour, animated with the app's own blink/glance frames and cadence, with
-  state cues (badges, dots, juggling balls, hops, shakes, sparkles) around it. Bots without an
-  avatar, or builds without the art, show the robot (accented in the avatar colour if known).
-- `scripts/import-grokbot-art.mjs` copies the face strips and the avatar palette from
-  `/Applications/Grok Bot.app` into `desktop/public/grokbot-art/` (gitignored) before every
-  desktop build.
-
-What M1 added:
-
-- **Persistent relay**: SQLite. Pairings survive a restart and catch-up works after one.
-- **Hardened relay**:
-  - production refuses to start without a strong pepper
-  - global pairing brute-force lock
-  - CORS off by default
-  - structured JSON logs
-  - SSE event ids with `Last-Event-ID` resume
-  - graceful shutdown
-- **Rust relay client** in the desktop app: the token lives in the macOS Keychain and never
-  enters the webview.
-- **Desktop**: toasts that never overlap or clip, a relay URL setting (Local / Hosted), and the
-  window position remembered across restarts.
-- **Art**: a new original pixel-art robot.
-- **Deploy**: a reviewed deploy plan for the future hosted relay (`.runs/m1-deploy-plan.md`).
+  `avatar: {shape, color}` (their profile's `avatarShape` / `avatarColor`), checked against the
+  26 shapes and 11 colours. The desktop draws that shape in that colour, animated with the app's
+  own blink/glance frames and cadence, with state cues (badges, dots, juggling balls, hops,
+  shakes, sparkles) around it. Bots without an avatar, or builds without the art, show the
+  robot (accented in the avatar colour if known). `scripts/import-grokbot-art.mjs` copies the
+  face strips and the avatar palette from `/Applications/Grok Bot.app` into
+  `desktop/public/grokbot-art/` (gitignored) before every desktop build.
+- **Desktop**: toasts that never overlap or clip, a working label, the window position
+  remembered across restarts, an original pixel-art robot.
+- `scripts/demo.sh` plays three fake bots from a dp2 code (`pbpaste | scripts/demo.sh -`);
+  `scripts/e2e-v2.sh` runs publisher → mailbox → pet client against a local fake ntfy or the
+  real ntfy.sh.
 
 ## Architecture
 
 ```
- Grok Bot (cloud)                    relay (Node 24)                  desktop (Tauri v2, macOS)
- ────────────────                    ───────────────                  ─────────────────────────
- skill/SKILL.md      POST /v1/pair   pairing codes (15 min, 1 use)    Rust: POST /v1/pair/start
-   pair once  ────────────────────▶  token = HMAC-hashed at rest  ◀── token → macOS Keychain
-   post status ──── POST /v1/events ▶ validate · rate-limit ·         Rust: GET /v1/stream (SSE)
-                    Bearer token      SQLite: last state per bot ────▶  Tauri events → webview
-                                                                       one pet per agent_id
+ Grok Bot computer                         ntfy.sh (or your ntfy)          desktop (Tauri v2, macOS)
+ ─────────────────                         ──────────────────────          ─────────────────────────
+ skill/SKILL.md                                                             Rust mailbox.rs
+ ~/.deskpet/deskpet-publish ── POST /<topic> ──▶  only ciphertext  ──SSE──▶ decrypt · validate ·
+   key in ~/.deskpet/pairing (0600)                                         replay guard → webview
+                                                                            one pet per agent_id
 ```
 
-Bots run in the cloud and can't reach `localhost`, so both sides talk to a **relay**. The
-desktop's Rust side opens a long-lived SSE stream (`reqwest`, token in the `Authorization`
-header, never in a URL) and forwards events to the webview. Bots `POST` small JSON status
-events.
+Bots can't reach your Mac and your Mac can't reach them, so both use a mailbox both can reach
+over outbound HTTPS. The desktop's Rust side holds the SSE subscription and forwards decrypted
+events to the webview over Tauri IPC.
 
 ```
-relay/      Node 24 + TypeScript, no runtime deps (node:http, node:crypto, node:sqlite)
 desktop/    Tauri v2 app; frontend is Vite + TypeScript, no framework
   art/build-sprites.mjs   generates the pixel-art spritesheets (no deps)
   public/sprites/         grokbot_<state>.png + _accent.png + manifest.json (see its README)
   src/layout.ts           pure pet/toast layout (unit-tested in test/)
-  src-tauri/src/relay.rs  relay HTTP + SSE client (backoff, Last-Event-ID, wake detection)
-  src-tauri/src/secrets.rs  Keychain (keyring crate)
-  src-tauri/src/window_state.rs  window position memory
   src/avatar.ts           avatar logic: strip tinting, face cadence, state cues, geometry (pure, tested)
   src/avatar-bank.ts      loads public/grokbot-art/ (gitignored, imported) and draws avatars
   src/presence.ts         what the pet bubble shows: toast vs persistent working label (pure, tested)
+  src/connections.ts      status merge, boot view, paste lines, settings migration (pure, tested)
   src-tauri/src/v2.rs     v2 pairing string, XChaCha20-Poly1305 envelope, validation, replay guard
   src-tauri/src/mailbox.rs  v2 ntfy SSE client (since=, backoff, wake detection)
-  src/connections.ts      v1 + v2 side by side: status merge, boot view (pure, tested)
-skill/SKILL.md            Grok Bot skill: v2 + v1 pairing, when/how to post status (+ avatar)
-skill/deskpet-publish     v2 bot-side publisher (Node stdlib; tests in skill/test/)
+  src-tauri/src/secrets.rs  Keychain (keyring crate)
+  src-tauri/src/window_state.rs  window position memory
+  src-tauri/src/relay.rs  deprecated v1 relay client (self-hosted relays only)
+skill/SKILL.md            Grok Bot skill: pairing, when/how to post status (+ avatar)
+skill/deskpet-publish     bot-side publisher (Node stdlib; tests in skill/test/)
 scripts/fake-ntfy.mjs     local stand-in for ntfy (tests, e2e)
 scripts/e2e-v2.sh         publisher → mailbox → Rust pet client, local fake or --real ntfy.sh
 scripts/import-grokbot-art.mjs  copies Grok Bot avatar art + palette from the installed app
 scripts/demo.sh           fake bots (Jarvis, Claude, Scout) cycling through states
-scripts/dev.sh            start relay / web prototype / tauri dev / tests
+scripts/dev.sh            tauri dev / web prototype / (deprecated) relay
+relay/                    DEPRECATED v1 relay, kept for self-hosters (see relay/README.md)
 ```
 
 ## Desk Pet v2: private mailbox
@@ -108,7 +98,7 @@ Both machines only have outbound HTTPS, so v2 uses a public pub/sub mailbox both
  ~/.deskpet/deskpet-publish                                                 Rust mailbox.rs
    seal(event+seq) ── POST /<topic> ──▶   caches ≤12 h, sees only  ──SSE──▶ GET /<topic>/sse?since=
    key in ~/.deskpet/pairing (0600)       {v:2,n,c} + size/time/IP         open · validate · replay
-                                                                           → same UI as v1
+                                                                           → one pet per bot
 ```
 
 - **Pairing string** (pet generates; never logged): `dp2.` + base64url(`0x02 | topic[16] |
@@ -119,7 +109,7 @@ Both machines only have outbound HTTPS, so v2 uses a public pub/sub mailbox both
   deletes them.
 - **Envelope** (the ntfy message body, ≤ 4096 bytes): `{"v":2,"n":"<24-byte nonce>","c":"<ciphertext‖tag>"}`,
   XChaCha20-Poly1305 (= libsodium `crypto_aead_xchacha20poly1305_ietf`), AAD
-  `deskpet-v2:<topic>`, random nonce per message. Plaintext: the v1 event JSON plus `seq`
+  `deskpet-v2:<topic>`, random nonce per message. Plaintext: the [event JSON](#event-fields) plus `seq`
   (strictly increasing per `agent_id`+`session`) and `ts`, ≤ 2048 bytes.
 - **Why this cipher**: it has to run from a plain bash environment on the bot computer where
   Python's `cryptography` may be missing and `openssl enc` has no AEAD modes. Node is there, and
@@ -128,7 +118,7 @@ Both machines only have outbound HTTPS, so v2 uses a public pub/sub mailbox both
   nonces are safe for any number of messages. The pet uses the audited RustCrypto
   `chacha20poly1305` crate; both sides are tested against one shared fixed vector.
 - **Pet checks**: the MAC (wrong key, tampering, another topic), envelope shape and size, event
-  fields (the relay's rules), `|ts − now| ≤ 10 min`, and `seq` > last seen for that bot+session.
+  fields ([rules below](#event-fields)), `|ts − now| ≤ 10 min`, and `seq` > last seen for that bot+session.
   Rejected messages are counted, never shown or logged.
 - **Catch-up**: the first connect asks `since=10m`, reconnects ask `since=<last message id>`.
   Catch-up events carry ntfy's receive time, so old messages don't toast or replay "done".
@@ -142,178 +132,58 @@ Both machines only have outbound HTTPS, so v2 uses a public pub/sub mailbox both
   to the last post of the same state, drops exact repeats within 10 s, and stays quiet for
   15 min after a `429`. For heavy use, run your own ntfy and set **Mailbox URL** in Settings.
 
-## Pairing flow (v1 relay)
+## Event fields
 
-Two steps. The relay only creates codes in step 1.
-
-1. **Desktop**: the user clicks **Connect your Grok Bot**. The app's Rust side calls
-   `POST /v1/pair/start` and gets `{code, token, expires_at}`. It stores the token in the
-   Keychain, passes only the code to the UI, and shows one line to paste to the bot (with a
-   Copy button):
-   `Install the Desk Pet skill and pair with code K7Q-42M`.
-   When the app isn't on the hosted relay, the line adds `using relay <url>`.
-2. **Bot**: `POST /v1/pair {code, agent_id?, agent_name?}` exchanges the code for the same
-   token plus `relay_url` (`DESKPET_PUBLIC_URL`). The desktop gets an `event: paired` on its
-   stream.
-
-Codes use an unambiguous alphabet (`ABCDEFGHJKMNPQRSTUVWXYZ23456789`, no 0/O/1/I/L), are
-**single use** and **expire after 15 minutes**. Responses: `400` malformed, `404` unknown,
-`410` already used / expired / cancelled, `429` too many attempts. Limits:
-
-- **10/min per client IP**.
-- **Global lock**: 30 failed redemptions from any IPs within 1 min lock `/v1/pair` for everyone
-  for 1 min.
-- **New pairings**: at most 120/min globally.
-
-## API
-
-All bodies are JSON (`Content-Type: application/json`), max **4 KiB**.
-
-| method & path         | auth   | purpose |
-| --------------------- | ------ | ------- |
-| `GET /health`         | none   | `{ok, version, db:"ok"}`; `503` with `db:"error"` if the database check fails |
-| `GET /livez`          | none   | `{ok:true}`, no dependencies |
-| `POST /v1/pair/start` | none   | desktop: new code + token → `201 {code, token, expires_at}` |
-| `POST /v1/pair`       | none   | bot: `{code, agent_id?, agent_name?}` → `200 {token, relay_url, agent_id}` |
-| `POST /v1/events`     | Bearer | bot status → `202 {ok:true}` |
-| `GET /v1/stream`      | Bearer | SSE: see below |
-| `POST /v1/unpair`     | Bearer | revoke the token now and close its streams |
-
-### Event schema (`POST /v1/events`)
+What a bot sends, inside the encryption (`deskpet-publish` builds and checks it):
 
 | field        | type   | rules |
 | ------------ | ------ | ----- |
-| `agent_id`   | string | required, `[a-z0-9_-]{1,64}`; legacy alias `bot` accepted |
+| `agent_id`   | string | required, `[a-z0-9_-]{1,64}` |
 | `agent_name` | string | optional, ≤ 64, defaults to `agent_id` |
 | `session`    | string | required, ≤ 128 |
 | `state`      | enum   | `idle thinking working juggling needs_you done error sleeping` |
-| `event`      | string | required, ≤ 64, e.g. `turn_start tool_start helper_start waiting turn_end error heartbeat` |
-| `message`    | string | optional, ≤ 160 chars, no control chars; shown as a toast, **never stored** |
-| `ts`         | string | required, ISO-8601 |
-| `avatar`     | object | optional (relay ≥ 0.3.0), exactly `{shape, color}`; `shape` one of `arch bean blob capsule cloud clover crystal cylinder dome egg flower gem heart hex house leaf pebble pumpkin shield sparkle square squircle star tablet teardrop wedge`, `color` one of `black brown red orange yellow green cyan blue violet magenta gray` (case-insensitive, stored lowercase); `null` = not sent |
+| `event`      | string | required, `[A-Za-z0-9_.:-]{1,64}`, e.g. `turn_start tool_start helper_start waiting turn_end error heartbeat` |
+| `message`    | string | optional, ≤ 160 chars, no control chars; shown as a toast |
+| `ts`         | string | required, ISO-8601; within ±10 min of the pet's clock |
+| `avatar`     | object | optional, exactly `{shape, color}`; `shape` one of `arch bean blob capsule cloud clover crystal cylinder dome egg flower gem heart hex house leaf pebble pumpkin shield sparkle square squircle star tablet teardrop wedge`, `color` one of `black brown red orange yellow green cyan blue violet magenta gray` (case-insensitive) |
+| `seq`        | int    | added by the publisher; strictly increasing per `agent_id` + `session` |
 
-The relay keeps the **latest avatar per bot** (any session) and attaches it to every `state`
-event for that bot, live and in catch-up, so the desktop gets it even from sessions that didn't
-send it. It is forgotten with the bot's states (24 h silence, agent eviction) and on unpair.
-Relays before 0.3.0 reject `avatar` as an unknown field; the skill and `demo.sh` handle that by
-not sending it.
-
-Unknown fields → `400`. Errors: `400` schema/JSON, `401` missing/bad/revoked token, `413` body
-> 4 KiB (enforced while streaming), `415` not JSON, `429` rate limit (token bucket **60/min,
-burst 20** per token; `Retry-After` header).
-
-Stream: up to **3 subscribers per token** (the 4th gets `429`). Events:
-
-- `retry: 3000`, then the **catch-up** `event: state` for each (agent, session), oldest first,
-  without messages.
-- `event: ready` `{resumed, states, paired, version}`.
-- Then live `event: state`, `event: paired`, `event: ping` every 15 s, and `event: revoked`.
-
-State events carry `id: <db-epoch>-<seq>`. With a matching `Last-Event-ID`, catch-up resends
-only the states that changed since that id. With a foreign, future or garbage id it sends
-everything. State for a bot silent for **24 h** is dropped.
-
-### Relay configuration (env)
-
-| var | default | |
-| --- | ------- | - |
-| `NODE_ENV` / `DESKPET_ENV` | | `production` turns on the production rules below |
-| `PORT` / `HOST` | `8787` / `127.0.0.1` | |
-| `DESKPET_DB` | dev `./data/deskpet.sqlite`, prod `/data/deskpet.sqlite` | SQLite file (`:memory:` for none) |
-| `DESKPET_PEPPER` | see below | HMAC pepper. **Production: required, ≥ 32 chars, or the relay refuses to start** (exit 78, the value is never echoed) |
-| `DESKPET_PUBLIC_URL` | request `Host` | `relay_url` returned to bots (prod: `https://grokbot-deskpet-relay.fly.dev`) |
-| `DESKPET_CORS_ORIGINS` | *(none: CORS off)* | exact origins, comma-separated. Only the browser prototype needs it |
-| `DESKPET_TRUST_PROXY` | `0` | `1` = per-IP limits use `Fly-Client-IP` (only behind Fly's proxy) |
-| `DESKPET_RATE_PER_MIN` / `DESKPET_RATE_BURST` | `60` / `20` | event rate limit per token |
-| `DESKPET_PAIR_RATE_PER_MIN` / `DESKPET_PAIR_RATE_BURST` | `10` / `10` | pairing attempts per IP |
-| `DESKPET_PAIR_GLOBAL_FAIL_MAX` / `_WINDOW_MS` / `_LOCK_MS` | `30` / `60000` / `60000` | global failed-code lock |
-| `DESKPET_PAIR_START_GLOBAL_PER_MIN` | `120` | new pairings per minute, all IPs |
-| `DESKPET_PING_MS` / `DESKPET_SWEEP_MS` | `15000` / `60000` | SSE heartbeat / cleanup interval |
-| `DESKPET_MAX_SUBSCRIBERS` | `3` | per token |
-| `DESKPET_LOG` | `1` | `0` silences the request log |
-
-**Pepper in dev.** With no `DESKPET_PEPPER` and a database file, the relay creates a random
-pepper on first start and keeps it in `data/dev-pepper`, next to the database. The file is
-mode `0600` and gitignored, so tokens keep working across dev restarts. Delete `relay/data/`
-to start fresh. Every existing pairing then dies, so re-pair.
-
-**Persistence.** `tokens` holds the HMAC, created/paired/last-seen/revoked times. `pairings`
-holds the code HMAC, the AES-GCM-sealed token (deleted on redemption) and the expiry. `states`
-holds the last state per token/agent/session, never message bodies. `meta` holds the schema
-version, the stream epoch and the event sequence. Migrations are ordered and idempotent
-(`PRAGMA user_version`) and upgrade the M0 file in place. A sweep every minute does the
-cleanup:
-
-- drops expired pairings
-- drops states silent for 24 h
-- retires tokens whose code was never redeemed (after 1 h)
-- purges revoked rows after 7 days
-
-**Logs.** One JSON line per request: `ts, level, msg, method, path, status, ms, ip`.
-
-- `path` is the route name, or `(unmatched)`, and never includes a query string.
-- `ip` is a 12-hex keyed hash, not the address.
-- Headers, tokens, codes and bodies are never logged. Tests assert this.
-
-**Shutdown.** On `SIGTERM`/`SIGINT` the relay stops accepting connections and ends every SSE
-stream (clients reconnect with `Last-Event-ID`). It then runs a final sweep, checkpoints the
-WAL and closes the database.
-
-### CORS model
-
-The relay sends **no** `Access-Control-*` headers unless `DESKPET_CORS_ORIGINS` lists an
-origin. The native app doesn't need CORS, because all relay HTTP and SSE runs in Rust and the
-webview only talks to Rust over Tauri IPC. Its CSP `connect-src` is IPC-only. The only client
-that needs CORS is the **browser prototype** (vite on `:1420`). `scripts/dev.sh` (relay) allows
-exactly `http://localhost:1420` and `http://127.0.0.1:1420`, and production leaves it unset.
+The pet keeps the latest avatar per bot. An event that breaks a rule is dropped; unknown fields
+are ignored (they are authenticated, so newer bots can add some) and never reach the UI.
 
 ## Running it
 
 Requirements: Node 24, and for the native app Rust + `cargo install tauri-cli --version ^2`.
+No server to run: the app talks to ntfy.sh directly.
 
 ```bash
-# 1. relay (foreground, Ctrl-C to stop)
-scripts/dev.sh                 # relay → http://127.0.0.1:8787 (SQLite + dev pepper in relay/data/)
-
-# 2a. desktop app (native, macOS)
+# desktop app (native, macOS)
 scripts/dev.sh tauri           # = cd desktop && npm install && cargo tauri dev
-#     or build a debug .app:
+#   or build a debug .app:
 cd desktop && cargo tauri build --debug
 open "desktop/src-tauri/target/debug/bundle/macos/Desk Pet for Grok Bot.app"
 
-# 2b. or the same UI as a plain web prototype (no Rust needed; token in memory only,
-#     so a page reload means pairing again)
+# the same UI as a plain web prototype (no Rust; no v2 there: keys and decryption live in Rust)
 scripts/dev.sh web             # = cd desktop && npm run dev → http://localhost:1420
 
-# 3. click "Connect your Grok Bot", copy the code, then play the bots:
-pbpaste | scripts/demo.sh -    # v2: a dp2.… code (or the whole paste line) on stdin; no relay needed
-scripts/demo.sh K7Q-42M        # v1: or DESKPET_CODE=K7Q-42M scripts/demo.sh ; add --fast for short sleeps
+# click "Connect your Grok Bot", Copy, then play three fake bots with that code:
+pbpaste | scripts/demo.sh -    # the dp2.… code (or the whole paste line) on stdin; add --fast for short sleeps
 ```
 
-v2 needs no step 1: the native app talks to ntfy.sh directly (the web prototype has no v2).
-
-`scripts/demo.sh` with **no code** creates a pairing itself, keeps the token in a shell variable,
-prints **only the code** (plus a ready `curl` line to redeem it by hand and test the bot
-side), and runs the demo on its own token. `RELAY_URL` overrides the relay address.
+`scripts/demo.sh` uses a throwaway home directory for the publisher and never prints the code.
+On ntfy.sh it uses about 17 of the day's ~250 messages for your IP.
 
 Tests:
 
 ```bash
-cd relay && npm test           # tsc + node:test: auth, schema, limits, pairing, persistence, migrations,
-                               #   SSE ids/resume, health, CORS, logs, config
-cd desktop && npm test         # node:test: toast/pet layout, relay URL validation, backoff, avatar states, working label
+cd desktop && npm test         # node:test: toast/pet layout, URL validation, backoff, avatar states,
+                               #   working label, connections + v1 deprecation migration
 cd desktop && npm run build    # tsc + vite build
-cd desktop/src-tauri && cargo test   # SSE parser, backoff, URL validation, keychain naming, window clamp,
-                                     #   v2 pairing/envelope/replay/validation, mailbox client + reconnect
+cd desktop/src-tauri && cargo test   # v2 pairing/envelope/replay/validation, mailbox client + reconnect,
+                                     #   SSE parser, backoff, URL validation, keychain naming, window clamp
 node --test skill/test/*.test.mjs    # publisher: crypto vectors, pairing, throttling, CLI vs fake ntfy
 scripts/e2e-v2.sh                    # publisher → fake ntfy → Rust pet client (add --real for ntfy.sh)
-```
-
-Production-like relay locally (CORS off, pepper never echoed):
-
-```bash
-cd relay
-NODE_ENV=production DESKPET_PEPPER="$(openssl rand -base64 48)" DESKPET_DB="$(mktemp -d)/deskpet.sqlite" npm start
+cd relay && npm test                 # deprecated v1 relay (self-hosting)
 ```
 
 Regenerate sprites: `cd desktop && npm run sprites` (writes `public/sprites/*`,
@@ -364,22 +234,23 @@ for app icons).
   is in `src/presence.ts` (pure, unit-tested).
 - Multiple sessions per bot: the highest-priority state wins:
   `needs_you > error > juggling > working > thinking > done > idle`. Active states with no
-  update for 10 min count as idle (bots send heartbeats every 60 s in long turns).
+  update for 10 min count as idle (bots send heartbeats about every 5 min in long turns).
 - `done` plays once, then idle. Idle for 5 min (30 s in `vite` dev) → sleeping.
-- **Connection**:
-  - Relay down: pets dim to the offline sprite with "offline · retrying".
-  - Reconnect: exponential backoff, 0.5–1 s doubling up to 30 s, with jitter. A 45 s silence
-    watchdog catches dead connections. Resuming sends `Last-Event-ID`.
+- **Connection** (Rust, `mailbox.rs`):
+  - Mailbox unreachable: pets dim to the offline sprite with "offline · …".
+  - Reconnect: exponential backoff, 0.5–1 s doubling up to 30 s, with jitter; a `429` waits at
+    least 60 s. A 100 s silence watchdog catches dead connections (ntfy sends keepalives every
+    45 s). Reconnects ask `since=<last message id>`.
   - Reconnects immediately on wake from sleep (the Rust side detects the wall-clock jump), on
     the `online` event and when the window becomes visible.
-  - 401 or `revoked`: the token is deleted from the Keychain and the app returns to the
-    pairing screen.
-- **Relay URL** (⚙): defaults to `http://127.0.0.1:8787`.
-  - Presets: **Local**, and **Hosted** = `https://grokbot-deskpet-relay.fly.dev`.
-  - Validation: https is required, except plain http for localhost. No path, query or
-    credentials.
-  - **Changing the relay means pairing again**, because a token belongs to one relay host. The
-    old token is revoked at the old relay (best effort) and removed from the Keychain.
+- **Settings** (⚙):
+  - The v2 row: `paired · ntfy.sh` (plus `· no bot yet` until a bot posts), **Show code** (for
+    another bot computer), **New code** (needs a second click: new topic and key, old bots go
+    unheard), **Unpair** (deletes topic and key); **Pair** when nothing is paired.
+  - **Mailbox URL**: `https://ntfy.sh` (chip) or your own ntfy; it applies to the next new code.
+  - **Click opens**, **Per-bot links**, **Pet size**.
+  - **Legacy: self-hosted relay (deprecated)**, collapsed: see
+    [Deprecated: self-hosted relay](#deprecated-self-hosted-relay).
 - Click (not drag) a pet → opens its URL via `tauri-plugin-opener` (capability allows only
   `http(s)://*`). Configure in `desktop/public/deskpet.config.json`
   (`openUrls.default`, `openUrls.agents.{agent_id}`) or in the settings panel. Default
@@ -387,54 +258,44 @@ for app icons).
 
 ### Keychain
 
-- The token is stored as service `com.grokbot.deskpet`, account
-  `relay-token:<relay host[:port]>`, for example `relay-token:127.0.0.1:8787`. You can see it in
-  Keychain Access.
-- The Rust side reads it to authenticate pairing, the stream and unpair. It is never sent to
-  the webview, logged, or put in an error message.
-- **Upgrading from M0.** On first launch, a token still in webview `localStorage` is moved into
-  the Keychain and deleted from `localStorage`. The M0 relay kept pairings in memory only, so
-  that token is almost certainly dead. The first 401 then clears it and shows **Connect your
-  Grok Bot**: click it and give the bot the new code (a one-time re-pair).
+- The v2 pairing string (topic + key + mailbox URL) is stored as service `com.grokbot.deskpet`,
+  account `mailbox-v2`. You can see it in Keychain Access.
+- It reaches the webview only to show or copy the paste line. It is never put in localStorage,
+  never logged, and never echoed in an error.
 - Unsigned debug builds get a new code signature on every rebuild. macOS may then ask once
   per build whether the app may use its Keychain item ("Always Allow").
+- **v1 clean-up.** On startup the app deletes a v1 token stored for the retired hosted relay
+  (account `relay-token:grokbot-deskpet-relay.fly.dev`) and drops that relay from its saved
+  settings, so it never tries to connect there again. It writes one line to
+  `~/Library/Logs/dev.deskpet.grokbot/deskpet.log` (nothing secret). The v2 entry is not
+  touched.
 
 ## Security notes
 
-- Tokens: 32 random bytes, base64url. The relay stores only `HMAC-SHA-256(pepper, token)` and
-  compares in constant time. Until a code is redeemed, the token is held only **encrypted**
-  (AES-256-GCM, key derived from pepper + code), and the ciphertext is deleted on redemption
-  or expiry. Tests assert the raw token never appears in the in-memory store or the SQLite file.
-- Tokens travel only in `Authorization: Bearer`, never in query strings (the stream ignores
-  `?token=`). The relay never logs headers, bodies, query strings or raw client IPs.
-- The relay fails closed: in production it won't start without a pepper of at least 32
-  characters. Changing the pepper invalidates every token.
-- Desktop: the token lives in the macOS Keychain and in the Rust process only, so the webview
-  (and any script in it) can't read it.
-- `message` bodies are forwarded live and never stored. Last-known state drops after 24 h.
-- `scripts/demo.sh` keeps the token in a variable, never echoes it, and passes the header to
-  curl through a process substitution so it doesn't show up in `ps`.
-- CORS is off unless explicitly configured (see "CORS model"). The Tauri CSP limits
-  `connect-src` to IPC.
-- Pairing brute force: 31⁶ ≈ 887M codes, each living 15 min. Attempts are throttled per IP and
-  by a global failed-attempt lock.
-- Unpair (settings) revokes the token server-side immediately and closes its streams.
+- The mailbox is untrusted. It sees the random topic name, ciphertext, sizes, timing and IP
+  addresses; never the key. Anyone who learns the topic but not the key can only post junk,
+  which the pet drops.
+- The code is the key: anyone with it can post as your bots (but can't read anything the pet
+  shows elsewhere). **New code** or **Unpair** retires it.
+- The pet rejects forged or tampered messages (MAC), replays (`seq`), events more than 10 min
+  off its clock, bad fields and oversize bodies, silently (counted, never logged).
+- Bot side: the code is passed on stdin, stored 0600 in `~/.deskpet/pairing`, and the
+  publisher puts nothing secret on a command line or in its output.
+- `message` is shown briefly and never stored by the pet; on ntfy.sh it sits encrypted in the
+  12 h cache.
+- Desktop: the webview's CSP limits `connect-src` to Tauri IPC; all network I/O is in Rust.
 
-## Deploy
+## Deprecated: self-hosted relay
 
-> As of M2 (2026-11-16) the hosted relay answers `/health` with version **0.2.0**. Relay 0.3.0
-> (avatars) is **not** deployed; until it is, bots and `demo.sh` send no avatars to it and pets
-> stay robots. Redeploying is Jun's call (nothing in this repo runs `fly`).
+v1 (a Desk Pet relay server with `XXX-XXX` pairing codes) is **deprecated**, and the hosted
+relay has been shut down. The Grok Bot skill no longer pairs v1 codes; a bot given one tells
+the user to make a new code in Desk Pet (⚙ → **Pair**).
 
-`relay/Dockerfile` and `relay/fly.toml` describe the standalone Fly app `grokbot-deskpet-relay`.
-
-- Deploying (or redeploying) requires Jun's explicit approval.
-- It shares nothing with `jarvis-scheduler`, and nothing in this repo runs `fly`.
-- It is a single machine (`--ha=false`), because state is SQLite on one volume.
-- The 0.3.0 migration (an `avatars` table) runs automatically on start and is additive; an
-  existing database and existing pairings keep working.
-
-The reviewed command list, cost estimate and teardown are in `.runs/m1-deploy-plan.md`.
+The relay code stays in `relay/` for people who want to run their own; the desktop app still
+supports it under ⚙ → **Legacy: self-hosted relay (deprecated)** (collapsed; enter your relay's
+URL, then **Pair**). With no relay set, v1 is fully off: no connections, no retries. Setup,
+API and the bot-side steps: [relay/README.md](relay/README.md).
+`scripts/demo.sh --v1` with `RELAY_URL=<your relay>` plays the fake bots against it.
 
 ## Grok Bot avatar art (import, not committed)
 
@@ -461,16 +322,15 @@ node scripts/import-grokbot-art.mjs          # or: cd desktop && npm run art
 
 - **Signing / notarization**: the debug `.app` is unsigned (Keychain may prompt after each
   rebuild); only the `app` bundle target is built (no dmg).
-- The Docker image hasn't been built locally (no Docker here). Fly's remote builder will
-  build it, and the build runs the test suite.
 - macOS only so far (keyring is built with `apple-native`). Windows/Linux untested. No tray
   icon, no autostart.
-- The browser prototype keeps its token in memory only, so a reload means pairing again. It
-  has no v2 (decryption and keys live in the Rust side).
-- v2 has no "bot paired" signal: the pet knows a bot is there when its first encrypted event
+- The browser prototype has no v2 (decryption and keys live in the Rust side).
+- No "bot paired" signal: the pet knows a bot is there when its first encrypted event
   arrives. A bot whose code was replaced keeps posting into a topic nobody reads.
-- v2 on ntfy.sh shares the 250 messages/day/IP budget with anyone else posting from the same
-  IP (e.g. other users of a shared bot computer).
+- ntfy.sh allows ~250 messages/day/IP, shared with anyone else posting from the same IP (e.g.
+  other users of a shared bot computer). For heavy use, run your own ntfy (Mailbox URL).
+- Node is required on the bot computer (no Python fallback); without it, `desk_pet()` does
+  nothing (fail-open).
 
 ## License
 
