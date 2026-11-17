@@ -798,13 +798,16 @@ button > svg {
 /* A bot's own window: a small settings button in the free corner beside the pet, on hover. */
 .gear {
   position: absolute;
-  bottom: 6px;
+  /* Same height and baseline as the name tag (bottom 6px, LABEL_H 16) so their centres line up. */
+  bottom: 5px;
   right: 4px;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   padding: 0;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
   border-radius: 50%;
   border: 0;
   background: var(--tag);
@@ -818,8 +821,9 @@ button > svg {
 }
 
 .gear svg {
-  width: 12px;
-  height: 12px;
+  display: block;
+  width: 11px;
+  height: 11px;
 }
 
 .gear:hover {
