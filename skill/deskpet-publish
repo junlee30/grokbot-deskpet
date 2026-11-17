@@ -1,0 +1,478 @@
+#!/usr/bin/env node
+// deskpet-publish: post a Desk Pet v2 status, end-to-end encrypted, to the pet's mailbox.
+// Node >= 12 standard library only (crypto, fs, child_process, https). No npm packages.
+//
+//   printf '%s' "$CODE" | deskpet-publish pair     store a dp2 pairing code (read from stdin)
+//   deskpet-publish status                          "paired (mailbox ntfy.sh)" / "not paired"
+//   deskpet-publish unpair                          forget the pairing
+//   deskpet-publish <agent_id> <agent_name> <state> <event> [message]
+//                   [--session <id>] [--avatar <shape>/<color>]
+//
+// Env: DESK_PET_HOME (default ~/.deskpet), DESK_PET_SESSION (default "default"),
+//      DESK_PET_AVATAR ('{"shape":"blob","color":"black"}') or DESK_PET_AVATAR_SHAPE +
+//      DESK_PET_AVATAR_COLOR, DESK_PET_DEBUG=1 (one-line outcome on stderr, never secrets).
+//
+// Publishing always fails open: exit 0, at most ~3 s, no output unless DESK_PET_DEBUG=1.
+// Secrets (the pairing code, topic, key) are never printed, never put on a command line
+// (curl gets its URL from stdin), and only stored in $DESK_PET_HOME/pairing (mode 0600).
+//
+// Crypto: XChaCha20-Poly1305 (= libsodium crypto_aead_xchacha20poly1305_ietf): HChaCha20 below
+// derives a subkey from the first 16 nonce bytes, then node's built-in IETF ChaCha20-Poly1305
+// runs with nonce = 0x00000000 || nonce[16..24]. Random 24-byte nonce per message.
+"use strict";
+
+const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+
+const PREFIX = "dp2.";
+const DEFAULT_MAILBOX = "https://ntfy.sh";
+const STATES = ["idle", "thinking", "working", "juggling", "needs_you", "done", "error", "sleeping"];
+const SHAPES = ("arch bean blob capsule cloud clover crystal cylinder dome egg flower gem heart hex house leaf " +
+  "pebble pumpkin shield sparkle square squircle star tablet teardrop wedge").split(" ");
+const COLORS = "black brown red orange yellow green cyan blue violet magenta gray".split(" ");
+const TIMEOUT_MS = 3000;
+const HEARTBEAT_MIN_MS = 4 * 60 * 1000; // ntfy.sh allows ~250 messages/day per IP: be frugal
+const DUP_WINDOW_MS = 10 * 1000;
+const RATE_LIMIT_BACKOFF_MS = 15 * 60 * 1000;
+
+// ------------------------------------------------------------------ base64url
+
+const b64u = (buf) => Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+function unb64u(s) {
+  if (!/^[A-Za-z0-9_-]*$/.test(s) || s.length % 4 === 1) throw new Error("pairing code is not valid base64url");
+  return Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+}
+
+// ------------------------------------------------------------------ XChaCha20-Poly1305
+
+function rotl(v, c) {
+  return ((v << c) | (v >>> (32 - c))) >>> 0;
+}
+
+/** HChaCha20(key[32], nonce16[16]) -> subkey[32]. */
+function hchacha20(key, n16) {
+  const s = new Uint32Array(16);
+  s[0] = 0x61707865; s[1] = 0x3320646e; s[2] = 0x79622d32; s[3] = 0x6b206574;
+  for (let i = 0; i < 8; i++) s[4 + i] = key.readUInt32LE(i * 4);
+  for (let i = 0; i < 4; i++) s[12 + i] = n16.readUInt32LE(i * 4);
+  const qr = (a, b, c, d) => {
+    s[a] = (s[a] + s[b]) >>> 0; s[d] = rotl(s[d] ^ s[a], 16);
+    s[c] = (s[c] + s[d]) >>> 0; s[b] = rotl(s[b] ^ s[c], 12);
+    s[a] = (s[a] + s[b]) >>> 0; s[d] = rotl(s[d] ^ s[a], 8);
+    s[c] = (s[c] + s[d]) >>> 0; s[b] = rotl(s[b] ^ s[c], 7);
+  };
+  for (let i = 0; i < 10; i++) {
+    qr(0, 4, 8, 12); qr(1, 5, 9, 13); qr(2, 6, 10, 14); qr(3, 7, 11, 15);
+    qr(0, 5, 10, 15); qr(1, 6, 11, 12); qr(2, 7, 8, 13); qr(3, 4, 9, 14);
+  }
+  const out = Buffer.alloc(32);
+  [0, 1, 2, 3, 12, 13, 14, 15].forEach((w, i) => out.writeUInt32LE(s[w], i * 4));
+  return out;
+}
+
+function ietfNonce(nonce24) {
+  return Buffer.concat([Buffer.alloc(4), nonce24.subarray(16, 24)]);
+}
+
+function xseal(key, nonce24, plaintext, aad) {
+  const c = crypto.createCipheriv("chacha20-poly1305", hchacha20(key, nonce24.subarray(0, 16)), ietfNonce(nonce24), { authTagLength: 16 });
+  c.setAAD(aad, { plaintextLength: plaintext.length });
+  return Buffer.concat([c.update(plaintext), c.final(), c.getAuthTag()]);
+}
+
+function xopen(key, nonce24, sealed, aad) {
+  if (sealed.length < 16) throw new Error("bad ciphertext");
+  const d = crypto.createDecipheriv("chacha20-poly1305", hchacha20(key, nonce24.subarray(0, 16)), ietfNonce(nonce24), { authTagLength: 16 });
+  d.setAAD(aad, { plaintextLength: sealed.length - 16 });
+  d.setAuthTag(sealed.subarray(sealed.length - 16));
+  return Buffer.concat([d.update(sealed.subarray(0, sealed.length - 16)), d.final()]);
+}
+
+// ------------------------------------------------------------------ pairing string
+
+function normalizeMailbox(input) {
+  let u;
+  try {
+    u = new URL(String(input).trim());
+  } catch {
+    throw new Error("pairing code has a bad mailbox URL");
+  }
+  const loop = ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname);
+  if (u.username || u.password || u.search || u.hash) throw new Error("pairing code has a bad mailbox URL");
+  if (!(u.protocol === "https:" || (u.protocol === "http:" && loop))) throw new Error("mailbox must be https");
+  const s = u.toString().replace(/\/+$/, "");
+  if (s.length > 200) throw new Error("pairing code has a bad mailbox URL");
+  return s;
+}
+
+/** Errors never contain the input. */
+function decodePairing(str) {
+  const s = String(str).trim().replace(/\.+$/, "");
+  if (!s.startsWith(PREFIX)) throw new Error("not a dp2 pairing code");
+  const body = s.slice(PREFIX.length);
+  if (body.length > 400) throw new Error("pairing code is too long");
+  const raw = unb64u(body);
+  if (raw.length < 1 + 16 + 32 + 4) throw new Error("pairing code is too short (cut off?)");
+  const data = raw.subarray(0, raw.length - 4);
+  const check = crypto.createHash("sha256").update(data).digest().subarray(0, 4);
+  if (!crypto.timingSafeEqual(check, raw.subarray(raw.length - 4))) {
+    throw new Error("pairing code checksum mismatch (mistyped or cut off?)");
+  }
+  if (data[0] !== 2) throw new Error("unsupported pairing code version");
+  const urlBytes = data.subarray(49);
+  return {
+    base: urlBytes.length ? normalizeMailbox(urlBytes.toString("utf8")) : DEFAULT_MAILBOX,
+    topic: Buffer.from(data.subarray(1, 17)),
+    key: Buffer.from(data.subarray(17, 49)),
+  };
+}
+
+function encodePairing(p) {
+  const parts = [Buffer.from([2]), p.topic, p.key];
+  if (p.base !== DEFAULT_MAILBOX) parts.push(Buffer.from(p.base, "utf8"));
+  const data = Buffer.concat(parts);
+  const check = crypto.createHash("sha256").update(data).digest().subarray(0, 4);
+  return PREFIX + b64u(Buffer.concat([data, check]));
+}
+
+const topicName = (p) => b64u(p.topic);
+const aadFor = (p) => Buffer.from(`deskpet-v2:${topicName(p)}`, "utf8");
+
+function seal(p, plaintext, nonce = crypto.randomBytes(24)) {
+  return JSON.stringify({ v: 2, n: b64u(nonce), c: b64u(xseal(p.key, nonce, Buffer.from(plaintext), aadFor(p))) });
+}
+
+function open(p, envelope) {
+  const o = JSON.parse(envelope);
+  return xopen(p.key, unb64u(o.n), unb64u(o.c), aadFor(p));
+}
+
+// ------------------------------------------------------------------ event
+
+const AGENT_ID_RE = /^[a-z0-9_-]{1,64}$/;
+const EVENT_RE = /^[A-Za-z0-9_.:-]{1,64}$/;
+
+/** One line, no control characters, at most `max` code points. */
+function clean(s, max) {
+  const t = [...String(s).replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim()];
+  return t.length > max ? t.slice(0, max - 1).join("") + "…" : t.join("");
+}
+
+function parseAvatar(v) {
+  if (!v) return null;
+  let shape;
+  let color;
+  if (typeof v === "string") {
+    const t = v.trim();
+    if (t.startsWith("{")) {
+      try {
+        const o = JSON.parse(t);
+        if (!o || typeof o !== "object") return null;
+        shape = o.shape;
+        color = o.color;
+      } catch {
+        return null;
+      }
+    } else {
+      [shape, color] = t.split(/[/:,]/);
+    }
+  } else if (typeof v === "object") {
+    shape = v.shape;
+    color = v.color;
+  }
+  if (typeof shape !== "string" || typeof color !== "string") return null;
+  shape = shape.trim().toLowerCase();
+  color = color.trim().toLowerCase();
+  return SHAPES.includes(shape) && COLORS.includes(color) ? { shape, color } : null;
+}
+
+/** Build the plaintext event, or throw a short reason (no secrets involved here). */
+function buildEvent(a) {
+  const agentId = String(a.agentId || "").toLowerCase();
+  if (!AGENT_ID_RE.test(agentId)) throw new Error("agent_id must match [a-z0-9_-]{1,64}");
+  if (!STATES.includes(a.state)) throw new Error(`state must be one of ${STATES.join(", ")}`);
+  if (!EVENT_RE.test(a.event || "")) throw new Error("event must match [A-Za-z0-9_.:-]{1,64}");
+  const session = clean(a.session || "default", 128) || "default";
+  const e = { agent_id: agentId, agent_name: clean(a.agentName || agentId, 64) || agentId, session, state: a.state, event: a.event };
+  const msg = a.message ? clean(a.message, 160) : "";
+  if (msg) e.message = msg;
+  e.ts = new Date(a.now).toISOString();
+  e.seq = a.seq;
+  const av = parseAvatar(a.avatar);
+  if (av) e.avatar = av;
+  return e;
+}
+
+// ------------------------------------------------------------------ local state (non-secret)
+
+function home() {
+  return process.env.DESK_PET_HOME || path.join(os.homedir(), ".deskpet");
+}
+
+function ensureHome() {
+  const h = home();
+  fs.mkdirSync(h, { recursive: true, mode: 0o700 });
+  try {
+    fs.chmodSync(h, 0o700);
+  } catch {
+    /* not ours to fix */
+  }
+  return h;
+}
+
+function writePrivate(file, text) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, text, { mode: 0o600 });
+  fs.chmodSync(tmp, 0o600);
+  fs.renameSync(tmp, file);
+}
+
+function readState() {
+  try {
+    const s = JSON.parse(fs.readFileSync(path.join(home(), "state.json"), "utf8"));
+    return s && typeof s === "object" && s.sessions && typeof s.sessions === "object" ? s : { sessions: {} };
+  } catch {
+    return { sessions: {} };
+  }
+}
+
+function saveState(st, now) {
+  // Keep it small: drop sessions idle for a day, cap at 64.
+  const entries = Object.entries(st.sessions)
+    .filter(([, v]) => v && now - v.at < 86_400_000)
+    .sort((x, y) => y[1].at - x[1].at)
+    .slice(0, 64);
+  st.sessions = Object.fromEntries(entries);
+  try {
+    writePrivate(path.join(ensureHome(), "state.json"), JSON.stringify(st));
+  } catch {
+    /* best effort */
+  }
+}
+
+/**
+ * Decide whether to send (ntfy.sh's free tier allows ~250 messages/day per IP, shared by every
+ * bot on this computer). Returns null to send, or the reason to skip.
+ */
+function skipReason(st, key, e, now) {
+  if (st.backoffUntil && now < st.backoffUntil) return "mailbox rate limit, backing off";
+  const last = st.sessions[key];
+  if (!last) return null;
+  if (e.event === "heartbeat" && last.state === e.state && now - last.at < HEARTBEAT_MIN_MS) return "heartbeat throttled";
+  if (last.state === e.state && last.event === e.event && (last.message || "") === (e.message || "") && now - last.at < DUP_WINDOW_MS) {
+    return "duplicate";
+  }
+  return null;
+}
+
+// ------------------------------------------------------------------ HTTP
+
+/** POST via curl (honours the machine's proxy settings); the URL goes to curl on stdin. */
+function postCurl(url, body) {
+  const { spawn } = require("child_process");
+  return new Promise((resolve) => {
+    let out = "";
+    let child;
+    try {
+      child = spawn("curl", ["-sS", "-m", String(TIMEOUT_MS / 1000), "-o", "/dev/null", "-w", "%{http_code}", "-K", "-"], {
+        stdio: ["pipe", "pipe", "ignore"],
+      });
+    } catch {
+      return resolve({ noCurl: true });
+    }
+    child.on("error", (err) => resolve(err && err.code === "ENOENT" ? { noCurl: true } : { status: 0 }));
+    child.stdout.on("data", (d) => (out += d));
+    child.on("close", () => resolve({ status: Number(out.trim()) || 0 }));
+    const q = (s) => `"${String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+    child.stdin.on("error", () => {});
+    child.stdin.end(
+      [
+        `url = ${q(url)}`,
+        `request = "POST"`,
+        `header = "Content-Type: text/plain"`,
+        `header = "X-Firebase: no"`,
+        `header = "X-Title: Desk Pet"`,
+        `user-agent = "deskpet-publish/2"`,
+        `data-binary = ${q(body)}`,
+        "",
+      ].join("\n"),
+    );
+  });
+}
+
+function postNode(url, body) {
+  const u = new URL(url);
+  const mod = require(u.protocol === "https:" ? "https" : "http");
+  return new Promise((resolve) => {
+    const req = mod.request(
+      u,
+      {
+        method: "POST",
+        timeout: TIMEOUT_MS,
+        headers: { "content-type": "text/plain", "x-firebase": "no", "x-title": "Desk Pet", "user-agent": "deskpet-publish/2", "content-length": Buffer.byteLength(body) },
+      },
+      (res) => {
+        res.resume();
+        resolve({ status: res.statusCode || 0 });
+      },
+    );
+    req.on("timeout", () => req.destroy());
+    req.on("error", () => resolve({ status: 0 }));
+    req.end(body);
+  });
+}
+
+async function post(url, body) {
+  if (!process.env.DESK_PET_NO_CURL) {
+    const r = await postCurl(url, body);
+    if (!r.noCurl) return r.status;
+  }
+  return (await postNode(url, body)).status;
+}
+
+// ------------------------------------------------------------------ commands
+
+function loadPairing() {
+  return decodePairing(fs.readFileSync(path.join(home(), "pairing"), "utf8"));
+}
+
+function readStdin() {
+  try {
+    return fs.readFileSync(0, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+function cmdPair() {
+  const input = readStdin();
+  const m = /dp2\.[A-Za-z0-9_-]+/.exec(input);
+  let p;
+  try {
+    p = decodePairing(m ? m[0] : input);
+  } catch (e) {
+    process.stderr.write(`deskpet-publish: ${e.message}\n`);
+    return 1;
+  }
+  writePrivate(path.join(ensureHome(), "pairing"), encodePairing(p) + "\n");
+  try {
+    fs.unlinkSync(path.join(home(), "state.json")); // new pairing: fresh throttle/backoff state
+  } catch {
+    /* none */
+  }
+  process.stdout.write(`Paired with Desk Pet (mailbox ${new URL(p.base).host}).\n`);
+  return 0;
+}
+
+function cmdStatus() {
+  try {
+    const p = loadPairing();
+    process.stdout.write(`paired (mailbox ${new URL(p.base).host})\n`);
+    return 0;
+  } catch {
+    process.stdout.write("not paired\n");
+    return 1;
+  }
+}
+
+function cmdUnpair() {
+  for (const f of ["pairing", "state.json"]) {
+    try {
+      fs.unlinkSync(path.join(home(), f));
+    } catch {
+      /* gone already */
+    }
+  }
+  process.stdout.write("Desk Pet pairing removed.\n");
+  return 0;
+}
+
+function parseArgs(argv) {
+  const pos = [];
+  const opt = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--session" || a === "--avatar") opt[a.slice(2)] = argv[++i];
+    else if (a.startsWith("--session=") || a.startsWith("--avatar=")) opt[a.slice(2, a.indexOf("="))] = a.slice(a.indexOf("=") + 1);
+    else pos.push(a);
+  }
+  return { pos, opt };
+}
+
+async function cmdPublish(argv) {
+  const debug = (m) => process.env.DESK_PET_DEBUG === "1" && process.stderr.write(`deskpet-publish: ${m}\n`);
+  const { pos, opt } = parseArgs(argv);
+  if (pos.length < 4) {
+    debug("usage: deskpet-publish <agent_id> <agent_name> <state> <event> [message]");
+    return;
+  }
+  let p;
+  try {
+    p = loadPairing();
+  } catch {
+    debug("not paired");
+    return;
+  }
+  const env = process.env;
+  const avatar =
+    opt.avatar ||
+    env.DESK_PET_AVATAR ||
+    (env.DESK_PET_AVATAR_SHAPE && env.DESK_PET_AVATAR_COLOR ? `${env.DESK_PET_AVATAR_SHAPE}/${env.DESK_PET_AVATAR_COLOR}` : "");
+  const now = Date.now();
+  const st = readState();
+  const session = clean(opt.session || env.DESK_PET_SESSION || "default", 128) || "default";
+  const key = `${String(pos[0]).toLowerCase()}\n${session}`;
+  const prev = st.sessions[key];
+  // seq: strictly increasing per agent+session, also across processes (microsecond clock).
+  const seq = Math.max(now * 1000 + Math.floor(Math.random() * 1000), prev && prev.seq ? prev.seq + 1 : 0);
+  let e;
+  try {
+    e = buildEvent({ agentId: pos[0], agentName: pos[1], state: pos[2], event: pos[3], message: pos.slice(4).join(" "), session, avatar, now, seq });
+  } catch (err) {
+    debug(`skipped: ${err.message}`);
+    return;
+  }
+  const why = skipReason(st, key, e, now);
+  if (why) {
+    debug(`skipped: ${why}`);
+    return;
+  }
+  const status = await post(`${p.base}/${topicName(p)}`, seal(p, JSON.stringify(e)));
+  if (status >= 200 && status < 300) {
+    st.sessions[key] = { state: e.state, event: e.event, message: e.message || "", at: now, seq };
+    delete st.backoffUntil;
+    debug(`sent ${status}`);
+  } else {
+    if (status === 429) st.backoffUntil = now + RATE_LIMIT_BACKOFF_MS;
+    debug(`failed: ${status === 0 ? "mailbox unreachable or timed out" : `mailbox answered ${status}`}`);
+  }
+  saveState(st, now);
+}
+
+async function main(argv) {
+  process.umask(0o077);
+  const cmd = argv[0];
+  if (cmd === "pair") return cmdPair();
+  if (cmd === "status") return cmdStatus();
+  if (cmd === "unpair") return cmdUnpair();
+  if (cmd === "-h" || cmd === "--help" || cmd === undefined) {
+    process.stdout.write(fs.readFileSync(__filename, "utf8").split("\n").slice(1, 19).map((l) => l.replace(/^\/\/ ?/, "")).join("\n") + "\n");
+    return 0;
+  }
+  // Publishing fails open: never more than ~3.5 s, never a non-zero exit.
+  setTimeout(() => process.exit(0), TIMEOUT_MS + 500).unref();
+  try {
+    await cmdPublish(argv);
+  } catch {
+    /* fail open */
+  }
+  return 0;
+}
+
+module.exports = { hchacha20, xseal, xopen, decodePairing, encodePairing, topicName, seal, open, buildEvent, parseAvatar, clean, skipReason };
+
+if (require.main === module) {
+  main(process.argv.slice(2)).then((code) => process.exit(code || 0), () => process.exit(0));
+}
