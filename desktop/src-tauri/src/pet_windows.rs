@@ -46,6 +46,9 @@ pub struct Inner {
     dropped: HashSet<String>,
     /// Agents whose pet is showing needs_you (the menu bar icon shows how many).
     needing: HashSet<String>,
+    /// Pets the user hid (right-click → Hide), with their recent events, until the bot does
+    /// something new or the user picks Show Hidden Pets.
+    hidden: HashMap<String, VecDeque<Value>>,
 }
 
 pub struct PetWindows(Mutex<Inner>);
@@ -62,6 +65,7 @@ impl Default for PetWindows {
             save_gen: 0,
             dropped: HashSet::new(),
             needing: HashSet::new(),
+            hidden: HashMap::new(),
         }))
     }
 }
@@ -164,6 +168,29 @@ pub fn set_status(app: &AppHandle, status: Value) {
 /// A decrypted, validated state event: open the agent's window or send it there.
 pub fn on_state(app: &AppHandle, v: Value) {
     let Some(agent) = v.get("agent_id").and_then(Value::as_str).map(str::to_owned) else { return };
+    // A hidden pet: keep its events; come back only when the bot does something new.
+    let unhid = {
+        let mut g = state(app).0.locked();
+        match g.hidden.get_mut(&agent) {
+            Some(buf) if pets::stays_hidden(&v) => {
+                if buf.len() >= BUFFER {
+                    buf.pop_front();
+                }
+                buf.push_back(v);
+                return;
+            }
+            Some(_) => {
+                let buf = g.hidden.remove(&agent).unwrap_or_default();
+                g.buffers.insert(agent.clone(), buf);
+                true
+            }
+            None => false,
+        }
+    };
+    if unhid {
+        sync_tray_menu(app);
+        log_line(app, &format!("pet shown again: agent={agent} posted"));
+    }
     let route = {
         let mut g = state(app).0.locked();
         let r = route_event(&g.open, &agent, pets::MAX_PET_WINDOWS);
@@ -275,9 +302,11 @@ pub fn close_all(app: &AppHandle) {
         g.buffers.clear();
         g.dropped.clear();
         g.needing.clear();
+        g.hidden.clear();
         std::mem::take(&mut g.open)
     };
     sync_tray_count(app);
+    sync_tray_menu(app);
     for a in &agents {
         if let Some(w) = label_for(a).and_then(|l| app.get_webview_window(&l)) {
             let _ = w.destroy();
@@ -320,19 +349,91 @@ pub fn open_settings(app: &AppHandle) {
 
 /// The menu bar / right-click menu, in macOS order: settings first, app-wide actions after it,
 /// Quit last in its own group. Title case; an ellipsis only where a window opens.
-pub const MENU_ITEMS: [(&str, &str); 3] = [("settings", "Settings…"), ("reset-positions", "Reset Pet Positions"), ("quit", "Quit Desk Pet")];
+pub const MENU_ITEMS: [(&str, &str); 4] =
+    [("settings", "Settings…"), ("reset-positions", "Reset Pet Positions"), ("show-hidden", "Show Hidden Pets"), ("quit", "Quit Desk Pet")];
 
-fn menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
-    let item = |i: usize| MenuItem::with_id(app, MENU_ITEMS[i].0, MENU_ITEMS[i].1, true, None::<&str>);
-    Menu::with_items(app, &[&item(0)?, &item(1)?, &PredefinedMenuItem::separator(app)?, &item(2)?])
+/// The menu. On a pet (right-click) it starts with "Hide <name>" for that pet. Show Hidden
+/// Pets is enabled only while some pet is hidden.
+fn menu(app: &AppHandle, pet: Option<(&str, &str)>) -> tauri::Result<Menu<Wry>> {
+    let any_hidden = !state(app).0.locked().hidden.is_empty();
+    let item = |i: usize, enabled: bool| MenuItem::with_id(app, MENU_ITEMS[i].0, MENU_ITEMS[i].1, enabled, None::<&str>);
+    let m = Menu::new(app)?;
+    if let Some((agent, name)) = pet {
+        if let Some(id) = pets::hide_menu_id(agent) {
+            m.append(&MenuItem::with_id(app, id, pets::hide_label(name), true, None::<&str>)?)?;
+            m.append(&PredefinedMenuItem::separator(app)?)?;
+        }
+    }
+    m.append(&item(0, true)?)?;
+    m.append(&item(1, true)?)?;
+    m.append(&item(2, any_hidden)?)?;
+    m.append(&PredefinedMenuItem::separator(app)?)?;
+    m.append(&item(3, true)?)?;
+    Ok(m)
+}
+
+/// The menu bar menu follows whether anything is hidden.
+fn sync_tray_menu(app: &AppHandle) {
+    if let (Some(tray), Ok(m)) = (app.tray_by_id("deskpet"), menu(app, None)) {
+        let _ = tray.set_menu(Some(m));
+    }
 }
 
 pub fn on_menu(app: &AppHandle, id: &str) {
     match id {
         "settings" => open_settings(app),
         "reset-positions" => reset_positions(app),
+        "show-hidden" => show_hidden(app),
         "quit" => app.exit(0),
-        _ => {}
+        _ => {
+            if let Some(agent) = pets::agent_of_hide_id(id) {
+                hide(app, agent);
+            }
+        }
+    }
+}
+
+/// Close one bot's pet until it does something new (or Show Hidden Pets). Its recent events
+/// are kept, so it comes back as it was.
+pub fn hide(app: &AppHandle, agent: &str) {
+    {
+        let mut g = state(app).0.locked();
+        if !g.open.iter().any(|a| a == agent) {
+            return;
+        }
+        let buf = g.buffers.remove(agent).unwrap_or_default();
+        g.hidden.insert(agent.to_string(), buf);
+    }
+    if let Some(w) = label_for(agent).and_then(|l| app.get_webview_window(&l)) {
+        let _ = w.destroy(); // Destroyed: drops it from the open list and the needs-you count
+    }
+    sync_tray_menu(app);
+    log_line(app, &format!("pet hidden: agent={agent}"));
+}
+
+/// Bring every hidden pet back now, where it was.
+pub fn show_hidden(app: &AppHandle) {
+    let agents: Vec<String> = {
+        let mut g = state(app).0.locked();
+        let hidden: Vec<(String, VecDeque<Value>)> = g.hidden.drain().collect();
+        let mut back = Vec::new();
+        for (agent, buf) in hidden {
+            if g.open.len() >= pets::MAX_PET_WINDOWS {
+                g.hidden.insert(agent, buf); // still over the cap: stays hidden
+                continue;
+            }
+            g.buffers.insert(agent.clone(), buf);
+            g.open.push(agent.clone());
+            back.push(agent);
+        }
+        back
+    };
+    for agent in &agents {
+        create(app, agent);
+    }
+    sync_tray_menu(app);
+    if !agents.is_empty() {
+        log_line(app, &format!("hidden pets shown: {}", agents.len()));
     }
 }
 
@@ -342,7 +443,7 @@ const TRAY_TEMPLATE: &[u8] = include_bytes!("../icons/tray-template@2x.png");
 
 /// Menu bar icon: the way back to settings when every window is a pet.
 pub fn tray(app: &AppHandle) -> tauri::Result<()> {
-    let mut b = TrayIconBuilder::with_id("deskpet").tooltip("Desk Pet").menu(&menu(app)?).show_menu_on_left_click(true);
+    let mut b = TrayIconBuilder::with_id("deskpet").tooltip("Desk Pet").menu(&menu(app, None)?).show_menu_on_left_click(true);
     match tauri::image::Image::from_bytes(TRAY_TEMPLATE) {
         Ok(icon) => b = b.icon(icon).icon_as_template(true),
         Err(e) => {
@@ -479,8 +580,10 @@ pub fn open_settings_window(app: AppHandle) {
 
 /// Right-click on a pet: the same menu as the tray icon, at the pointer.
 #[tauri::command]
-pub fn pet_menu(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
-    let m = menu(&app).map_err(|e| e.to_string())?;
+pub fn pet_menu(app: AppHandle, window: WebviewWindow, name: Option<String>) -> Result<(), String> {
+    let agent = agent_of(window.label()).map(str::to_owned);
+    let pet = agent.as_deref().map(|a| (a, name.as_deref().unwrap_or(a)));
+    let m = menu(&app, pet).map_err(|e| e.to_string())?;
     window.popup_menu(&m).map_err(|e| e.to_string())
 }
 
@@ -535,6 +638,35 @@ pub fn selftest(app: &AppHandle) {
             );
         }
         log_line(&app, "selftest: sent done to each pet window");
+        // Hide: the first pet hides (through the menu's own path), stays hidden through a
+        // heartbeat, comes back on a new turn; hidden again, Show Hidden Pets brings it back.
+        let a = agents[0].clone();
+        let post = |event: &str, state: &str| {
+            let now = crate::v2::now_ms();
+            on_state(
+                &app,
+                json!({"agent_id": a, "agent_name": "Test 1", "session": "selftest", "state": state, "event": event,
+                       "ts": crate::v2::iso_from_ms(now), "seq": now, "received_at": crate::v2::iso_from_ms(now), "via": "selftest"}),
+            );
+        };
+        let step = |what: &str| {
+            std::thread::sleep(Duration::from_millis(1500));
+            let g = state(&app).0.locked();
+            let window = label_for(&a).and_then(|l| app.get_webview_window(&l)).is_some();
+            let line = format!("selftest hide: {what}: open={} hidden={} window={window}", g.open.contains(&a), g.hidden.contains_key(&a));
+            drop(g);
+            log_line(&app, &line);
+        };
+        on_menu(&app, &pets::hide_menu_id(&a).unwrap_or_default());
+        step("after Hide");
+        post("heartbeat", "done");
+        step("after a heartbeat");
+        post("turn_start", "thinking");
+        step("after a new turn");
+        on_menu(&app, &pets::hide_menu_id(&a).unwrap_or_default());
+        step("hidden again");
+        on_menu(&app, "show-hidden");
+        step("after Show Hidden Pets");
     });
 }
 
@@ -584,9 +716,10 @@ mod tests {
     #[test]
     fn menu_is_in_macos_order_and_title_case() {
         let labels: Vec<&str> = MENU_ITEMS.iter().map(|(_, l)| *l).collect();
-        assert_eq!(labels, ["Settings…", "Reset Pet Positions", "Quit Desk Pet"]);
+        assert_eq!(labels, ["Settings…", "Reset Pet Positions", "Show Hidden Pets", "Quit Desk Pet"]);
         // Every id is handled by on_menu.
         let ids: Vec<&str> = MENU_ITEMS.iter().map(|(i, _)| *i).collect();
-        assert_eq!(ids, ["settings", "reset-positions", "quit"]);
+        assert_eq!(ids, ["settings", "reset-positions", "show-hidden", "quit"]);
+        assert!(ids.iter().all(|i| pets::agent_of_hide_id(i).is_none()), "no clash with hide:<agent>");
     }
 }

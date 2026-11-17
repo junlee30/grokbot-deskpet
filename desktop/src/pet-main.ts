@@ -118,10 +118,11 @@ app.addEventListener("mousedown", (ev) => {
   if ((ev.target as HTMLElement).closest("button, .pet")) return;
   void startWindowDrag();
 });
-// Right-click: Settings…, Reset pet positions, Quit (the same menu as the menu bar icon).
+// Right-click: Hide <name>, then the menu bar icon's menu (Settings…, Reset Pet Positions,
+// Show Hidden Pets, Quit).
 app.addEventListener("contextmenu", (ev) => {
   ev.preventDefault();
-  void invokeCmd("pet_menu");
+  void invokeCmd("pet_menu", { name: pet?.name ?? null });
 });
 
 // ---------- render loop ----------

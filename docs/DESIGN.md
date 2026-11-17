@@ -45,6 +45,11 @@ The UI follows Apple's HIG for menu bar extras, app icons, Dark Mode, typography
     above), never on top of another pet.
   - **Reset Pet Positions** (settings, menu bar icon, or right-click a pet) forgets them all and
     lines up the open pets bottom-right again.
+  - **Hide <name>** (right-click a pet) closes that bot's pet. It comes back where it was when
+    the bot does something new (any post except a `heartbeat`), or right away with **Show
+    Hidden Pets** (right-click any pet, or the menu bar icon; greyed out when nothing is
+    hidden). Hiding is for this run of the app: after a restart a pet opens on its bot's next
+    post as usual. The rules are `hide_menu_id`, `hide_label` and `stays_hidden` in `pets.rs`.
   - Unpair or a new code closes every pet window (positions are kept for when the bots come back).
     At most 12 pet windows are open at once.
   - The Rust side sends each window only its own bot's events (`pet_windows.rs`); the pure

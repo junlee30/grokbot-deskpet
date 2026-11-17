@@ -56,7 +56,8 @@ The same code works for any number of bots and bot computers (menu bar icon → 
   contents.
 - **"Needs you" notifications**: a macOS notification when a bot starts waiting for you, and
   the menu bar icon shows how many bots are waiting. Turn it off in Settings.
-- **Click a pet** to open that bot's chat in Grok Bot.
+- **Click a pet** to open that bot's chat in Grok Bot. **Right-click** it to hide just that
+  pet until its bot does something new (or bring it back with **Show Hidden Pets**).
 - **Light and dark mode, Reduced Motion, Increase Contrast**, and a menu bar icon instead of a
   Dock icon.
 

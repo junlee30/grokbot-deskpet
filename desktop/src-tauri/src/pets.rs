@@ -224,9 +224,55 @@ pub fn sane_size(w: i32, h: i32) -> (i32, i32) {
     (w.clamp(MIN_SIZE, MAX_SIZE), h.clamp(MIN_SIZE, MAX_SIZE))
 }
 
+// ---------------------------------------------------------------- hiding a pet
+
+/// Menu id for "Hide <name>" on one bot's pet (agent ids are `[a-z0-9_-]`, so no escaping).
+pub fn hide_menu_id(agent: &str) -> Option<String> {
+    agent_id_ok(agent).then(|| format!("hide:{agent}"))
+}
+
+/// The agent a "Hide" menu id is for.
+pub fn agent_of_hide_id(id: &str) -> Option<&str> {
+    id.strip_prefix("hide:").filter(|a| agent_id_ok(a))
+}
+
+/// "Hide Jarvis": the bot's name on one line, cut to fit a menu.
+pub fn hide_label(name: &str) -> String {
+    const MAX: usize = 32;
+    let one: String = name.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    let one = one.split_whitespace().collect::<Vec<_>>().join(" ");
+    let cut: String = if one.chars().count() > MAX { one.chars().take(MAX - 1).chain(std::iter::once('…')).collect() } else { one };
+    format!("Hide {}", if cut.is_empty() { "Pet".into() } else { cut })
+}
+
+/// A hidden pet stays hidden through heartbeats (a long turn re-posting its state); anything
+/// else its bot does (a new turn, a tool, a question, done) brings it back.
+pub fn stays_hidden(event: &serde_json::Value) -> bool {
+    event.get("event").and_then(serde_json::Value::as_str) == Some("heartbeat")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hiding_a_pet() {
+        assert_eq!(hide_menu_id("jarvis").as_deref(), Some("hide:jarvis"));
+        assert_eq!(hide_menu_id("Bad Id"), None);
+        assert_eq!(agent_of_hide_id("hide:jarvis"), Some("jarvis"));
+        for bad in ["hide:", "hide:Jarvis", "hide:a/b", "settings", "xhide:jarvis"] {
+            assert_eq!(agent_of_hide_id(bad), None, "{bad}");
+        }
+        assert_eq!(hide_label("Jarvis"), "Hide Jarvis");
+        assert_eq!(hide_label("  J\nA  "), "Hide J A");
+        assert_eq!(hide_label(""), "Hide Pet");
+        assert_eq!(hide_label(&"x".repeat(50)).chars().count(), "Hide ".len() + 32);
+        let ev = |e: &str| serde_json::json!({"agent_id": "jarvis", "event": e});
+        assert!(stays_hidden(&ev("heartbeat")));
+        for e in ["turn_start", "tool_start", "waiting", "turn_end", "error", "updated"] {
+            assert!(!stays_hidden(&ev(e)), "{e}");
+        }
+    }
 
     // A 1512x982 laptop screen (menu bar 33, Dock 70 at the bottom) and a 1920x1080 monitor
     // above-left of it, in logical points.
