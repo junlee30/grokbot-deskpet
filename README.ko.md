@@ -13,6 +13,7 @@
 
 <p align="center">
   <a href="https://github.com/junlee30/grokbot-deskpet/releases/latest"><img src="https://img.shields.io/github/v/release/junlee30/grokbot-deskpet?label=download&color=ff8a3d" alt="최신 릴리스" /></a>
+  <a href="https://www.npmjs.com/package/deskpet-publish"><img src="https://img.shields.io/npm/v/deskpet-publish?label=npm" alt="npm의 deskpet-publish" /></a>
   <a href="https://github.com/junlee30/grokbot-deskpet/actions/workflows/ci.yml"><img src="https://github.com/junlee30/grokbot-deskpet/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/platform-macOS-lightgrey" alt="macOS" />
   <a href="LICENSE"><img src="https://img.shields.io/github/license/junlee30/grokbot-deskpet" alt="Apache-2.0" /></a>
@@ -26,13 +27,19 @@
 
 ---
 
-## 다운로드
+## 설치
 
-**[macOS용 Desk Pet 다운로드](https://github.com/junlee30/grokbot-deskpet/releases/latest)** (Apple 실리콘, Intel 모두 지원). `.dmg`를 열고 **Desk Pet**을 응용 프로그램 폴더로 끌어다 놓으세요. [Homebrew](https://brew.sh)로 설치할 수도 있어요:
+Desk Pet은 macOS(Apple 실리콘, Intel)에서 돌아가요. 편한 방법을 골라 주세요:
+
+**Homebrew** ([brew.sh](https://brew.sh)). `brew upgrade --cask desk-pet`으로 업데이트하기 가장 쉬워요:
 
 ```bash
 brew install --cask junlee30/tap/desk-pet
 ```
+
+**다운로드:** **[최신 릴리스](https://github.com/junlee30/grokbot-deskpet/releases/latest)**에서 `.dmg`를 받아 열고, **Desk Pet**을 응용 프로그램 폴더로 끌어다 놓으세요.
+
+**소스에서:** [직접 빌드하기](#직접-빌드하기)를 봐 주세요.
 
 > [!NOTE]
 > 아직 Apple 개발자 ID로 서명하지 않은 앱이에요. 처음 열 때는 **Desk Pet.app을 오른쪽 클릭 → 열기**를 누르거나, 시스템 설정 → 개인정보 보호 및 보안에서 허용해 주세요. 그래도 열리지 않으면 다운로드 표시를 지우세요:
@@ -48,7 +55,17 @@ brew install --cask junlee30/tap/desk-pet
 
 봇이 몇 개든 같은 한 줄을 쓰면 돼요. 이 줄에는 펫의 열쇠가 들어 있으니 내 봇에게만 알려 주세요.
 
-**Grok Bot이 아니어도 돼요.** 명령을 실행할 수 있는 거라면 무엇이든 펫을 움직일 수 있어요. 퍼블리셔는 npm에 [`deskpet-publish`](https://www.npmjs.com/package/deskpet-publish)로 올라가 있어요(`npx -y deskpet-publish@2.2.0 --help`). [skill/README.md](skill/README.md)(영어)를 봐 주세요.
+### 다른 에이전트와 스크립트
+
+봇 쪽은 `deskpet-publish`라는 작은 스크립트 하나예요. Grok Bot은 붙여 넣은 줄을 보고 알아서 설치하고, 명령을 실행할 수 있는 다른 것들은 npm에서 받아 펫을 움직일 수 있어요:
+
+| | |
+| --- | --- |
+| **설치 없이 실행** | `npx -y deskpet-publish@2.2.0 --help` |
+| **명령어로 설치** | `npm install -g deskpet-publish` |
+| **한 번 페어링하고 보내기** | `pbpaste \| deskpet-publish pair` → `deskpet-publish init my-bot "My Bot"` → `deskpet-publish --bot my-bot working tool_start "Running tests"` |
+
+스킬이 SHA-256으로 고정해 둔 것과 같은 파일이고, 이 저장소에서 [npm provenance](https://docs.npmjs.com/generating-provenance-statements)와 함께 게시돼요. 자세한 내용: [skill/README.md](skill/README.md)(영어).
 
 <p align="center">
   <img src="docs/images/demo.gif" alt="움직이는 펫들: Jarvis는 생각 중에서 작업 중, 완료로 바뀌고, Scout는 대답을 기다리고, Nova는 두 가지 일을 저글링하고, 루비는 한국어로 일하고, Pip는 자는 중" width="100%" />

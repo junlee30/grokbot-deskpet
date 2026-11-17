@@ -13,6 +13,7 @@
 
 <p align="center">
   <a href="https://github.com/junlee30/grokbot-deskpet/releases/latest"><img src="https://img.shields.io/github/v/release/junlee30/grokbot-deskpet?label=download&color=ff8a3d" alt="Latest release" /></a>
+  <a href="https://www.npmjs.com/package/deskpet-publish"><img src="https://img.shields.io/npm/v/deskpet-publish?label=npm" alt="deskpet-publish on npm" /></a>
   <a href="https://github.com/junlee30/grokbot-deskpet/actions/workflows/ci.yml"><img src="https://github.com/junlee30/grokbot-deskpet/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/platform-macOS-lightgrey" alt="macOS" />
   <a href="LICENSE"><img src="https://img.shields.io/github/license/junlee30/grokbot-deskpet" alt="Apache-2.0" /></a>
@@ -26,13 +27,19 @@
 
 ---
 
-## Download
+## Install
 
-**[Download Desk Pet for macOS](https://github.com/junlee30/grokbot-deskpet/releases/latest)** (Apple silicon and Intel), open the `.dmg` and drag **Desk Pet** to Applications. Or with [Homebrew](https://brew.sh):
+Desk Pet runs on macOS (Apple silicon and Intel). Pick one:
+
+**Homebrew** ([brew.sh](https://brew.sh)), easiest to keep up to date with `brew upgrade --cask desk-pet`:
 
 ```bash
 brew install --cask junlee30/tap/desk-pet
 ```
+
+**Download:** get the `.dmg` from the **[latest release](https://github.com/junlee30/grokbot-deskpet/releases/latest)**, open it and drag **Desk Pet** to Applications.
+
+**From source:** see [Build it yourself](#build-it-yourself).
 
 > [!NOTE]
 > Desk Pet isn't signed with an Apple Developer ID yet. The first time, **right-click Desk Pet.app → Open**, or allow it in System Settings → Privacy & Security. If macOS still refuses, clear the download flag:
@@ -48,7 +55,17 @@ brew install --cask junlee30/tap/desk-pet
 
 The same line works for every bot you have. It contains the key to your pets, so only share it with your own bots.
 
-**Not a Grok Bot?** Anything that can run a command can drive a pet: the publisher is on npm as [`deskpet-publish`](https://www.npmjs.com/package/deskpet-publish) (`npx -y deskpet-publish@2.2.0 --help`). See [skill/README.md](skill/README.md).
+### Other agents and scripts
+
+The bot side is one small script, `deskpet-publish`. Grok Bots install it themselves from the paste line; anything else that can run a command can drive a pet with it from npm:
+
+| | |
+| --- | --- |
+| **Run without installing** | `npx -y deskpet-publish@2.2.0 --help` |
+| **Install the command** | `npm install -g deskpet-publish` |
+| **Pair once, then post** | `pbpaste \| deskpet-publish pair` → `deskpet-publish init my-bot "My Bot"` → `deskpet-publish --bot my-bot working tool_start "Running tests"` |
+
+It's the same file the skill pins by SHA-256, published from this repo with [npm provenance](https://docs.npmjs.com/generating-provenance-statements). Details: [skill/README.md](skill/README.md).
 
 <p align="center">
   <img src="docs/images/demo.gif" alt="Pets animating: Jarvis goes from thinking to working to done, Scout waits for an answer, Nova juggles two tasks, 루비 works in Korean, Pip sleeps" width="100%" />

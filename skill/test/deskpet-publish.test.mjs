@@ -492,6 +492,15 @@ describe("npm package (deskpet-publish)", () => {
     assert.equal(pkg.dependencies, undefined, "the publisher has no dependencies");
   });
 
+  test("the READMEs' npx lines name this version", () => {
+    for (const readme of ["README.md", "README.ko.md", "skill/README.md"]) {
+      const text = fs.readFileSync(path.join(here, "..", "..", readme), "utf8");
+      const pinned = [...text.matchAll(/deskpet-publish@(\d+\.\d+\.\d+)/g)].map((x) => x[1]);
+      assert.ok(pinned.length > 0, `${readme} shows an npx line`);
+      for (const v of pinned) assert.equal(v, m.VERSION, `update deskpet-publish@${v} in ${readme}`);
+    }
+  });
+
   test("ships only the publisher, SKILL.md and the README", () => {
     const [packed] = JSON.parse(execFileSync("npm", ["pack", "--dry-run", "--json"], { cwd: path.join(here, ".."), encoding: "utf8" }));
     assert.deepEqual(packed.files.map((f) => f.path).sort(), ["README.md", "SKILL.md", "deskpet-publish", "package.json"]);
