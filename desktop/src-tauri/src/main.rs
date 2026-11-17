@@ -154,32 +154,6 @@ fn log_line(app: &AppHandle, msg: &str) {
     }
 }
 
-/// Marker in the app data dir: the v1 clean-up has run successfully and never needs to again.
-const V1_CLEANUP_MARKER: &str = "v1-cleanup.done";
-
-/// One-time clean-up: v1 (the relay) is gone from the app, so delete any v1 relay tokens an
-/// older version left in the Keychain. Runs in the background until it succeeds once, then
-/// never again. Logs one line with a count only; the v2 pairing is never touched.
-fn cleanup_v1_once(app: &AppHandle) {
-    let app = app.clone();
-    std::thread::spawn(move || {
-        let Ok(dir) = app.path().app_data_dir() else { return };
-        let marker = dir.join(V1_CLEANUP_MARKER);
-        if marker.exists() {
-            return;
-        }
-        match secrets::purge_v1_relay_tokens() {
-            Ok(n) => {
-                if n > 0 {
-                    log_line(&app, &format!("removed {n} leftover v1 relay token(s) from the Keychain (v1 is gone; v2 unaffected)"));
-                }
-                let _ = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&marker, b"1\n"));
-            }
-            Err(e) => log_line(&app, &format!("v1 Keychain clean-up will retry next launch: {e}")),
-        }
-    });
-}
-
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -209,7 +183,6 @@ fn main() {
             // A desk pet should not take a Dock slot or the app switcher on macOS.
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-            cleanup_v1_once(app.handle());
             pet_windows::init(app.handle());
             if let Err(e) = pet_windows::tray(app.handle()) {
                 log_line(app.handle(), &format!("menu bar icon unavailable: {e}"));

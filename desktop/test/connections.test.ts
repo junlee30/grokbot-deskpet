@@ -2,7 +2,7 @@
 // validation, and dropping what older versions saved for v1.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { bootView, looksLikeDp2, migrateSettings, OLD_V1_KEYS, pasteLineV2, headerStatus } from "../src/connections.ts";
+import { bootView, looksLikeDp2, pasteLineV2, headerStatus } from "../src/connections.ts";
 import { DEFAULT_MAILBOX, validateMailboxUrl } from "../src/net.ts";
 
 describe("headerStatus", () => {
@@ -51,35 +51,5 @@ describe("validateMailboxUrl", () => {
     for (const bad of ["http://ntfy.example.com", "https://u:p@ntfy.sh", "https://ntfy.sh/?x=1", "https://ntfy.sh/#a", "ftp://x", "nope"]) {
       assert.equal(validateMailboxUrl(bad).ok, false, bad);
     }
-  });
-});
-
-describe("old v1 state", () => {
-  it("drops relayUrl and pairMode from saved settings, keeps the rest", () => {
-    const saved = {
-      relayUrl: "https://relay.example.com",
-      pairMode: "v1",
-      mailboxUrl: "https://ntfy.sh",
-      petSize: "small",
-      petOrder: ["jarvis"],
-    };
-    assert.deepEqual(migrateSettings(saved), { mailboxUrl: "https://ntfy.sh", petSize: "small", petOrder: ["jarvis"] });
-    assert.equal(saved.relayUrl, "https://relay.example.com", "input not mutated");
-    assert.deepEqual(migrateSettings({ relayUrl: "" }), {});
-    assert.deepEqual(migrateSettings({ pairMode: "v2", petSize: "large" }), { petSize: "large" });
-  });
-  it("drops the old click-opens-a-web-link settings (openUrls)", () => {
-    assert.deepEqual(migrateSettings({ openUrls: { default: "https://grok.com", agents: { jarvis: "https://x" } }, petSize: "small" }), {
-      petSize: "small",
-    });
-  });
-  it("nothing to do on v2-only settings", () => {
-    assert.equal(migrateSettings({ mailboxUrl: "https://ntfy.sh" }), null);
-    assert.equal(migrateSettings({}), null);
-  });
-  it("clears the old v1 pairing keys but never the v2 ones", () => {
-    assert.deepEqual([...OLD_V1_KEYS].sort(), ["deskpet.paired", "deskpet.pending", "deskpet.token"]);
-    assert.ok(!OLD_V1_KEYS.includes("deskpet.settings"));
-    assert.ok(!OLD_V1_KEYS.includes("deskpet.v2.seen"));
   });
 });

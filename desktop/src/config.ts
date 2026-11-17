@@ -1,5 +1,4 @@
 import type { PetSize } from "./layout.ts";
-import { migrateSettings, OLD_V1_KEYS } from "./connections.ts";
 import { DEFAULT_MAILBOX, validateMailboxUrl } from "./net.ts";
 
 // App configuration: shipped defaults (public/deskpet.config.json) + local overrides from the
@@ -37,23 +36,12 @@ function readSettings(): Settings {
   }
 }
 
-/**
- * Forget what older versions stored: v1 (relay) settings fields and pairing state, and the
- * old click-opens-a-web-link settings. (The Rust side deletes leftover v1 Keychain tokens.)
- */
-function dropOldV1State(): void {
-  const m = migrateSettings(readSettings() as Record<string, unknown>);
-  if (m) localStorage.setItem(SETTINGS_KEY, JSON.stringify(m));
-  for (const k of OLD_V1_KEYS) localStorage.removeItem(k);
-}
-
 /** Merge into the saved settings (only non-secret preferences live here). */
 export function saveSettings(s: Settings): void {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...readSettings(), ...s }));
 }
 
 export async function loadConfig(): Promise<DeskPetConfig> {
-  dropOldV1State();
   let file: Partial<DeskPetConfig> = {};
   try {
     const r = await fetch("deskpet.config.json", { cache: "no-store" });

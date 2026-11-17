@@ -1,7 +1,0 @@
-node_modules
-data
-*.sqlite
-*.sqlite-*
-dev-pepper
-.deskpet-token
-fly.toml

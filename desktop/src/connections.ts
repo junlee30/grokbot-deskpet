@@ -43,20 +43,3 @@ export function bootView(s: { paired: boolean; seen: boolean }): View {
   if (!s.paired) return "pair-start";
   return s.seen ? "pets" : "pair-code";
 }
-
-/** localStorage keys older versions used for the v1 relay (pairing state, an M0 token). */
-export const OLD_V1_KEYS: readonly string[] = ["deskpet.token", "deskpet.pending", "deskpet.paired"];
-
-/**
- * Settings fields older versions saved that are gone: v1's `relayUrl` and `pairMode`, and
- * `openUrls` (a pet click used to open a web link; now it opens the bot's Grok Bot chat).
- */
-const OLD_SETTINGS_FIELDS = ["relayUrl", "pairMode", "openUrls"];
-
-/** Saved settings without the old fields. Returns null when nothing needs to change. */
-export function migrateSettings(s: Record<string, unknown>): Record<string, unknown> | null {
-  if (!OLD_SETTINGS_FIELDS.some((k) => k in s)) return null;
-  const out: Record<string, unknown> = { ...s };
-  for (const k of OLD_SETTINGS_FIELDS) delete out[k];
-  return out;
-}
