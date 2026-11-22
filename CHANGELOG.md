@@ -3,7 +3,9 @@
 Desk Pet app releases (`v…` tags, [GitHub releases](https://github.com/junlee30/grokbot-deskpet/releases)).
 The bot skill has its own versions (`skill-v…` tags); the skill version each app expects is noted.
 
-## Unreleased
+## 0.5.0 · 2026-11-21
+
+Expects skill **2.2.0**.
 
 - **Updates from the menu bar:** **Check for Updates…** (it becomes **Update to X…** when
   Desk Pet's own check, every few hours, finds one) and Settings → **Updates** download the
