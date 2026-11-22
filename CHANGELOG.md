@@ -3,6 +3,14 @@
 Desk Pet app releases (`v…` tags, [GitHub releases](https://github.com/junlee30/grokbot-deskpet/releases)).
 The bot skill has its own versions (`skill-v…` tags); the skill version each app expects is noted.
 
+## 0.5.1 · 2026-11-21
+
+Expects skill **2.3.0**.
+
+- **Pets stop sleeping through work.** Skill 2.3.0 tells bots to post `thinking` as the first
+  thing on every turn, and to post `done` only when background work has finished too. Pets
+  of bots on an older skill say so: ⚙ → **Copy Skill Link** and send it to that bot.
+
 ## 0.5.0 · 2026-11-21
 
 Expects skill **2.2.0**.

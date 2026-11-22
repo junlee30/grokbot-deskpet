@@ -1,6 +1,6 @@
 {
   "name": "grokbot-deskpet-desktop",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "Desk Pet, for Grok Bot (unofficial) - desktop app frontend (Tauri v2 + Vite).",
   "license": "Apache-2.0",
