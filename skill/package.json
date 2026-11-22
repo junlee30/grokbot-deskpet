@@ -1,6 +1,6 @@
 {
   "name": "deskpet-publish",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Post end-to-end encrypted status updates from a Grok Bot (or any agent) to its pixel-art Desk Pet on your Mac.",
   "keywords": [
     "desk-pet",

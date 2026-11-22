@@ -39,7 +39,7 @@ const path = require("path");
 const os = require("os");
 
 /** Publisher version, sent as `pv` so the pet can tell when a bot's copy is out of date. */
-const VERSION = "2.2.0";
+const VERSION = "2.3.0";
 const PREFIX = "dp2.";
 const DEFAULT_MAILBOX = "https://ntfy.sh";
 const STATES = ["idle", "thinking", "working", "juggling", "needs_you", "done", "error", "sleeping"];

@@ -33,7 +33,7 @@ body:
     attributes:
       label: Skill version on the bot
       description: Ask the bot to run `~/.deskpet/deskpet-publish --version`.
-      placeholder: "deskpet-publish 2.2.0"
+      placeholder: "deskpet-publish 2.3.0"
   - type: input
     id: macos
     attributes:

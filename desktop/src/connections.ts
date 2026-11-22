@@ -29,7 +29,7 @@ export function headerStatus(s: { paired: boolean; conn: Conn | null; host: stri
  * matches protocol/v2.json and skill/SKILL.md; push the tag `skill-v<version>` with a release.
  */
 export const SKILL_REPO = "junlee30/grokbot-deskpet";
-export const SKILL_VERSION = "2.2.0";
+export const SKILL_VERSION = "2.3.0";
 export const SKILL_URL = `https://raw.githubusercontent.com/${SKILL_REPO}/skill-v${SKILL_VERSION}/skill/SKILL.md`;
 
 /**

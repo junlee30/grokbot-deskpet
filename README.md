@@ -69,7 +69,7 @@ The bot side is one small script, `deskpet-publish`. Grok Bots install it themse
 
 | | |
 | --- | --- |
-| **Run without installing** | `npx -y deskpet-publish@2.2.0 --help` |
+| **Run without installing** | `npx -y deskpet-publish@2.3.0 --help` |
 | **Install the command** | `npm install -g deskpet-publish` |
 | **Pair once, then post** | `pbpaste \| deskpet-publish pair` → `deskpet-publish init my-bot "My Bot"` → `deskpet-publish --bot my-bot working tool_start "Running tests"` |
 

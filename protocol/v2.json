@@ -1,6 +1,6 @@
 {
   "$comment": "Desk Pet v2 protocol constants and test cases, shared by skill/deskpet-publish (node tests), desktop/src-tauri/src/v2.rs (cargo tests, and publisher_version at build time) and the desktop frontend tests. Change it here and every side's tests check they agree. Bump publisher_version together with VERSION in skill/deskpet-publish: the desktop asks bots on an older publisher to update.",
-  "publisher_version": "2.2.0",
+  "publisher_version": "2.3.0",
   "states": [
     "idle",
     "thinking",
@@ -83,7 +83,7 @@
         "color": "black"
       },
       "grokbot_id": "2f06d68c-1b2a-4c3d-8e9f-0a1b2c3d4e5f",
-      "pv": "2.2.0",
+      "pv": "2.3.0",
       "lang": "ko"
     },
     {
@@ -94,7 +94,7 @@
       "event": "turn_end",
       "ts": "2026-11-16T12:00:00.000Z",
       "seq": 2,
-      "pv": "2.2.0",
+      "pv": "2.3.0",
       "dropped": 12
     },
     {
@@ -105,7 +105,7 @@
       "event": "waiting:approval.v2",
       "ts": "2026-11-16T12:00:00.000Z",
       "seq": 3,
-      "pv": "2.2.0",
+      "pv": "2.3.0",
       "lang": "en-US"
     }
   ],

@@ -12,7 +12,7 @@ from [SKILL.md](https://github.com/junlee30/grokbot-deskpet/blob/main/skill/SKIL
 Use the npm package to drive a pet from anything else that can run a command.
 
 ```bash
-npm install -g deskpet-publish@2.2.0     # or prefix each command with: npx -y deskpet-publish@2.2.0
+npm install -g deskpet-publish@2.3.0     # or prefix each command with: npx -y deskpet-publish@2.3.0
 
 # Once: the pairing code from Desk Pet → Settings → Show code. Read from stdin, never argv.
 pbpaste | deskpet-publish pair

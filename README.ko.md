@@ -69,7 +69,7 @@ brew install --cask junlee30/tap/desk-pet
 
 | | |
 | --- | --- |
-| **설치 없이 실행** | `npx -y deskpet-publish@2.2.0 --help` |
+| **설치 없이 실행** | `npx -y deskpet-publish@2.3.0 --help` |
 | **명령어로 설치** | `npm install -g deskpet-publish` |
 | **한 번 페어링하고 보내기** | `pbpaste \| deskpet-publish pair` → `deskpet-publish init my-bot "My Bot"` → `deskpet-publish --bot my-bot working tool_start "Running tests"` |
 

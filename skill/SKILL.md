@@ -1,6 +1,6 @@
 ---
 name: desk-pet
-description: Show this Grok Bot as a pixel-art pet on the user's desktop, drawn as its own Grok Bot profile picture (avatarShape/avatarColor); clicking the pet opens this bot's chat in the Grok Bot app. Use when the user says "Install the Desk Pet skill (from <link>) and pair with code dp2.…" to pair once (private, end-to-end encrypted mailbox), and during every turn to post short lifecycle status (thinking, working, juggling, needs_you, done, error). Never sends prompts, replies, tool arguments, file contents or secrets.
+description: Show this Grok Bot as a pixel-art pet on the user's desktop, drawn as its own Grok Bot profile picture (avatarShape/avatarColor); clicking the pet opens this bot's chat in the Grok Bot app. Use when the user says "Install the Desk Pet skill (from <link>) and pair with code dp2.…" to pair once (private, end-to-end encrypted mailbox), and on EVERY turn: post `thinking` as the very first thing you do when a user message arrives, then short lifecycle status (working, juggling, needs_you, error), and `done` only when all your work, background work included, has finished. Never sends prompts, replies, tool arguments, file contents or secrets.
 ---
 
 # Desk Pet
@@ -42,8 +42,8 @@ in a file other than the one below, in memory notes, in chat, or on a process co
    matches:
 
    ```bash
-   DP_VERSION=2.2.0
-   DP_SHA256=0dfe8f9bd7b7d020495dbdf23f60217a4f0cad4a327f9aa4afe9c2e28a72e882
+   DP_VERSION=2.3.0
+   DP_SHA256=e4728f91e363fa88377ee39b613e60aa9ec2b3232ec28975d84e9a95ed41b76a
    DP_URL="https://raw.githubusercontent.com/junlee30/grokbot-deskpet/skill-v$DP_VERSION/skill/deskpet-publish"
    DP_LOCAL="<this skill's folder>/deskpet-publish"
    dp_ok() { node -e 'const [f, h] = process.argv.slice(1); const d = require("crypto").createHash("sha256").update(require("fs").readFileSync(f)).digest("hex"); process.exit(d === h ? 0 : 1)' "$1" "$DP_SHA256"; }
@@ -118,16 +118,31 @@ If you usually talk with the user in one language, add it: `init jarvis --profil
 
 ## 3. When to post which state
 
+Two habits matter more than everything else here. The pet only knows what you post, so a
+turn you don't announce looks like a sleeping pet while you are busy.
+
+1. **Every turn starts with `desk_pet thinking turn_start`.** Make it the first thing you do
+   when a user message arrives: before you read anything, call any tool or write a word of
+   your reply. This holds for every turn, including short answers, follow-ups in the same
+   conversation and turns that start with a tool call. If you notice in the middle of a turn
+   that you skipped it, post your current state (`working`, `juggling`, …) right away.
+2. **`done` means everything you started has finished.** If work keeps running after you
+   reply (a background task, a long search, sub-agents, a check you will report back on),
+   don't post `done`: post `working` (or `juggling` for several things at once) with a short
+   label, keep up the heartbeats, and post `done` when that work has really finished and you
+   have told the user.
+
 Post at these moments. `session` is an id for the current conversation/task (stable across
 the turn, max 128 characters, no personal data). Something like `chat-<short random id>` is fine.
 
 | moment                                              | `state`     | `event`        |
 | --------------------------------------------------- | ----------- | -------------- |
-| a new user turn starts, you begin reasoning         | `thinking`  | `turn_start`   |
+| a user message arrives (first thing, every turn)    | `thinking`  | `turn_start`   |
 | you start using a tool (search, code, browse, ...)  | `working`   | `tool_start`   |
 | you start helpers / sub-agents running in parallel  | `juggling`  | `helper_start` |
 | you are blocked waiting on the user (question, approval, login) | `needs_you` | `waiting` |
-| the turn finished                                   | `done`      | `turn_end`     |
+| you reply but work keeps running in the background  | `working` / `juggling` | `tool_start` / `helper_start` |
+| everything finished, background work included       | `done`      | `turn_end`     |
 | a visible failure the user should know about        | `error`     | `error`        |
 | long turn: re-post the current state every ~5 min   | (current)   | `heartbeat`    |
 
@@ -159,7 +174,7 @@ desk_pet() {  # usage: desk_pet <state> <event> [message]
   return 0
 }
 
-desk_pet thinking turn_start
+desk_pet thinking turn_start   # first thing, every turn
 desk_pet working tool_start "Running the test suite"
 desk_pet needs_you waiting "Need your approval to continue"
 desk_pet done turn_end
