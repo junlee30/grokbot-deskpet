@@ -8,7 +8,10 @@
 //! - Each window's position is saved (debounced) when it is moved, keyed by agent_id, in
 //!   app config dir / pets.json, and restored (clamped onto a connected monitor) next time.
 //! - Unpair / new code: `pets_close_all`. The menu (tray icon and right-click on a pet) has
-//!   Settings…, Reset pet positions and Quit.
+//!   Settings…, Check for Updates…, Keep Pets on Top, Reset Pet Positions, Show Hidden Pets
+//!   and Quit.
+//! - Keep Pets on Top (saved with the positions): on, every pet floats above other windows;
+//!   off, pets sit behind your windows and float up only while their bot needs you.
 //!
 //! Locking rule: never call a window method while holding the lock. Window methods can run
 //! window-event handlers synchronously on the main thread, and those lock it too.
@@ -19,7 +22,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent, Wry};
 
@@ -51,6 +54,8 @@ pub struct Inner {
     hidden: HashMap<String, VecDeque<Value>>,
     /// The menu and menu bar labels in the app's UI language (set by the main window).
     ui: UiStrings,
+    /// A newer version the updater found (updater.rs): the menu offers it.
+    update: Option<String>,
 }
 
 /// Menu and menu bar labels in the app's UI language. The main window sends them
@@ -59,6 +64,10 @@ pub struct Inner {
 #[serde(default)]
 pub struct UiStrings {
     pub settings: String,
+    pub check_updates: String,
+    /// The same menu item once a newer version is known (`{v}` = the version).
+    pub update_to: String,
+    pub keep_on_top: String,
     pub reset_positions: String,
     pub show_hidden: String,
     pub quit: String,
@@ -71,9 +80,12 @@ impl Default for UiStrings {
     fn default() -> Self {
         Self {
             settings: MENU_ITEMS[0].1.into(),
-            reset_positions: MENU_ITEMS[1].1.into(),
-            show_hidden: MENU_ITEMS[2].1.into(),
-            quit: MENU_ITEMS[3].1.into(),
+            check_updates: MENU_ITEMS[1].1.into(),
+            update_to: "Update to {v}…".into(),
+            keep_on_top: MENU_ITEMS[2].1.into(),
+            reset_positions: MENU_ITEMS[3].1.into(),
+            show_hidden: MENU_ITEMS[4].1.into(),
+            quit: MENU_ITEMS[5].1.into(),
             tray_needs_one: "Desk Pet · 1 bot needs you".into(),
             tray_needs_many: "Desk Pet · {n} bots need you".into(),
         }
@@ -94,6 +106,9 @@ impl UiStrings {
         };
         Self {
             settings: fix(self.settings, d.settings),
+            check_updates: fix(self.check_updates, d.check_updates),
+            update_to: fix(self.update_to, d.update_to),
+            keep_on_top: fix(self.keep_on_top, d.keep_on_top),
             reset_positions: fix(self.reset_positions, d.reset_positions),
             show_hidden: fix(self.show_hidden, d.show_hidden),
             quit: fix(self.quit, d.quit),
@@ -119,6 +134,7 @@ impl Default for PetWindows {
             needing: HashSet::new(),
             hidden: HashMap::new(),
             ui: UiStrings::default(),
+            update: None,
         }))
     }
 }
@@ -279,12 +295,12 @@ pub fn on_state(app: &AppHandle, v: Value) {
 fn create(app: &AppHandle, agent: &str) {
     let Some(label) = label_for(agent) else { return };
     let (bounds, work) = monitors(app);
-    let (pos, size) = {
+    let (pos, size, front) = {
         let mut g = state(app).0.locked();
         let size = g.size;
         let pos = place_new(g.store.get(agent), size, &bounds, &work, &g.store.others(agent, size));
         g.store.set(agent, pos);
-        (pos, size)
+        (pos, size, pets::in_front(!g.store.behind, g.needing.contains(agent)))
     };
     schedule_save(app);
     let built = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("pet.html".into()))
@@ -297,7 +313,7 @@ fn create(app: &AppHandle, agent: &str) {
         .decorations(false)
         .transparent(true)
         .shadow(false)
-        .always_on_top(true)
+        .always_on_top(front)
         .skip_taskbar(true)
         .visible_on_all_workspaces(true)
         .accept_first_mouse(true)
@@ -308,6 +324,9 @@ fn create(app: &AppHandle, agent: &str) {
         .build();
     match built {
         Ok(w) => {
+            if !front {
+                set_level(&w, false);
+            }
             track(&w, agent.to_string());
             let n = state(app).0.locked().open.len();
             log_line(app, &format!("pet window opened: agent={agent} at ({},{}) {}x{} (open: {n})", pos.0, pos.1, size.0, size.1));
@@ -400,19 +419,31 @@ pub fn open_settings(app: &AppHandle) {
 
 // ---------------------------------------------------------------- menu + tray
 
-/// The menu bar / right-click menu, in macOS order: settings first, app-wide actions after it,
-/// Quit last in its own group. Title case; an ellipsis only where a window opens.
-pub const MENU_ITEMS: [(&str, &str); 4] =
-    [("settings", "Settings…"), ("reset-positions", "Reset Pet Positions"), ("show-hidden", "Show Hidden Pets"), ("quit", "Quit Desk Pet")];
+/// The menu bar / right-click menu, in macOS order: settings and updates first, the pets'
+/// options after them, Quit last in its own group. Title case; an ellipsis only where a window
+/// opens.
+pub const MENU_ITEMS: [(&str, &str); 6] = [
+    ("settings", "Settings…"),
+    ("check-updates", "Check for Updates…"),
+    ("keep-on-top", "Keep Pets on Top"),
+    ("reset-positions", "Reset Pet Positions"),
+    ("show-hidden", "Show Hidden Pets"),
+    ("quit", "Quit Desk Pet"),
+];
 
 /// The menu. On a pet (right-click) it starts with "Hide <name>" for that pet. Show Hidden
-/// Pets is enabled only while some pet is hidden.
+/// Pets is enabled only while some pet is hidden; Check for Updates… names the new version
+/// once the updater has found one.
 fn menu(app: &AppHandle, pet: Option<(&str, String)>) -> tauri::Result<Menu<Wry>> {
-    let (any_hidden, ui) = {
+    let (any_hidden, on_top, update, ui) = {
         let g = state(app).0.locked();
-        (!g.hidden.is_empty(), g.ui.clone())
+        (!g.hidden.is_empty(), !g.store.behind, g.update.clone(), g.ui.clone())
     };
-    let labels = [ui.settings, ui.reset_positions, ui.show_hidden, ui.quit];
+    let updates = match update {
+        Some(v) => ui.update_to.replace("{v}", &one_line(&v, 24)),
+        None => ui.check_updates.clone(),
+    };
+    let labels = [ui.settings, updates, ui.keep_on_top, ui.reset_positions, ui.show_hidden, ui.quit];
     let item = |i: usize, enabled: bool| MenuItem::with_id(app, MENU_ITEMS[i].0, &labels[i], enabled, None::<&str>);
     let m = Menu::new(app)?;
     if let Some((agent, hide_label)) = pet {
@@ -423,9 +454,12 @@ fn menu(app: &AppHandle, pet: Option<(&str, String)>) -> tauri::Result<Menu<Wry>
     }
     m.append(&item(0, true)?)?;
     m.append(&item(1, true)?)?;
-    m.append(&item(2, any_hidden)?)?;
     m.append(&PredefinedMenuItem::separator(app)?)?;
+    m.append(&CheckMenuItem::with_id(app, MENU_ITEMS[2].0, &labels[2], true, on_top, None::<&str>)?)?;
     m.append(&item(3, true)?)?;
+    m.append(&item(4, any_hidden)?)?;
+    m.append(&PredefinedMenuItem::separator(app)?)?;
+    m.append(&item(5, true)?)?;
     Ok(m)
 }
 
@@ -439,6 +473,14 @@ fn sync_tray_menu(app: &AppHandle) {
 pub fn on_menu(app: &AppHandle, id: &str) {
     match id {
         "settings" => open_settings(app),
+        "check-updates" => {
+            open_settings(app);
+            let _ = app.emit_to("main", "ui:check-updates", ());
+        }
+        "keep-on-top" => {
+            let on = state(app).0.locked().store.behind; // flip it
+            set_on_top(app, on);
+        }
         "reset-positions" => reset_positions(app),
         "show-hidden" => show_hidden(app),
         "quit" => app.exit(0),
@@ -492,6 +534,58 @@ pub fn show_hidden(app: &AppHandle) {
     if !agents.is_empty() {
         log_line(app, &format!("hidden pets shown: {}", agents.len()));
     }
+}
+
+/// A pet window in front of other windows (floating), or behind them (below normal windows,
+/// still above the desktop icons).
+fn set_level(w: &WebviewWindow, front: bool) {
+    let r = if front { w.set_always_on_top(true) } else { w.set_always_on_bottom(true) };
+    if let Err(e) = r {
+        log_line(w.app_handle(), &format!("pet window level: {e}"));
+    }
+}
+
+/// Re-level one pet after its needs-you state or Keep Pets on Top changed.
+fn relevel(app: &AppHandle, agent: &str) {
+    let front = {
+        let g = state(app).0.locked();
+        pets::in_front(!g.store.behind, g.needing.contains(agent))
+    };
+    if let Some(w) = label_for(agent).and_then(|l| app.get_webview_window(&l)) {
+        set_level(&w, front);
+    }
+}
+
+/// Keep Pets on Top, from the menu or Settings. Saved with the positions; the main window is
+/// told so an open Settings card shows it.
+pub fn set_on_top(app: &AppHandle, on_top: bool) {
+    let agents = {
+        let mut g = state(app).0.locked();
+        if g.store.behind == !on_top {
+            return;
+        }
+        g.store.behind = !on_top;
+        g.open.clone()
+    };
+    for a in &agents {
+        relevel(app, a);
+    }
+    save_now(app);
+    sync_tray_menu(app);
+    let _ = app.emit_to("main", "pets:on-top", on_top);
+    log_line(app, &format!("keep pets on top: {on_top}"));
+}
+
+/// The updater found a newer version (or none): the menu says so.
+pub fn set_update(app: &AppHandle, version: Option<String>) {
+    {
+        let mut g = state(app).0.locked();
+        if g.update == version {
+            return;
+        }
+        g.update = version;
+    }
+    sync_tray_menu(app);
 }
 
 /// The menu bar icon: a black + alpha template image (icons-src/tray-template.svg, 36 px drawn at
@@ -567,13 +661,14 @@ pub fn pet_attention(app: AppHandle, window: WebviewWindow, needs: bool, notify:
     let changed = {
         let mut g = state(&app).0.locked();
         if needs {
-            g.needing.insert(agent)
+            g.needing.insert(agent.clone())
         } else {
             g.needing.remove(&agent)
         }
     };
     if changed {
         sync_tray_count(&app);
+        relevel(&app, &agent);
     }
     if needs && notify {
         notify_needs_you(&app, &title, &body);
@@ -618,6 +713,20 @@ pub fn pets_set_size(app: AppHandle, window: WebviewWindow, width: i32, height: 
         state(&app).0.locked().store.set(&agent, pos);
     }
     schedule_save(&app);
+    Ok(())
+}
+
+/// Keep Pets on Top, for the Settings card.
+#[tauri::command]
+pub fn pets_on_top(app: AppHandle, window: WebviewWindow) -> Result<bool, String> {
+    require_main(&window)?;
+    Ok(!state(&app).0.locked().store.behind)
+}
+
+#[tauri::command]
+pub fn pets_set_on_top(app: AppHandle, window: WebviewWindow, on_top: bool) -> Result<(), String> {
+    require_main(&window)?;
+    set_on_top(&app, on_top);
     Ok(())
 }
 
@@ -743,6 +852,28 @@ pub fn selftest(app: &AppHandle) {
         step("hidden again");
         on_menu(&app, "show-hidden");
         step("after Show Hidden Pets");
+        // Keep Pets on Top off: every pet goes behind other windows, the first comes forward
+        // while its bot needs you and goes back after; then the setting is turned on again.
+        let levels = |what: &str| {
+            std::thread::sleep(Duration::from_millis(2500));
+            let open = state(&app).0.locked().open.clone();
+            let on_top: Vec<String> = open
+                .iter()
+                .map(|x| {
+                    let top = label_for(x).and_then(|l| app.get_webview_window(&l)).and_then(|w| w.is_always_on_top().ok());
+                    format!("{x}={}", top.map_or("?", |t| if t { "front" } else { "behind" }))
+                })
+                .collect();
+            log_line(&app, &format!("selftest levels: {what}: {}", on_top.join(" ")));
+        };
+        on_menu(&app, "keep-on-top");
+        levels("Keep Pets on Top off");
+        post("question", "needs_you");
+        levels("first bot needs you");
+        post("turn_end", "done");
+        levels("first bot done");
+        on_menu(&app, "keep-on-top");
+        levels("Keep Pets on Top on");
     });
 }
 
@@ -801,10 +932,13 @@ mod tests {
     #[test]
     fn menu_is_in_macos_order_and_title_case() {
         let labels: Vec<&str> = MENU_ITEMS.iter().map(|(_, l)| *l).collect();
-        assert_eq!(labels, ["Settings…", "Reset Pet Positions", "Show Hidden Pets", "Quit Desk Pet"]);
+        assert_eq!(labels, ["Settings…", "Check for Updates…", "Keep Pets on Top", "Reset Pet Positions", "Show Hidden Pets", "Quit Desk Pet"]);
         // Every id is handled by on_menu.
         let ids: Vec<&str> = MENU_ITEMS.iter().map(|(i, _)| *i).collect();
-        assert_eq!(ids, ["settings", "reset-positions", "show-hidden", "quit"]);
+        assert_eq!(ids, ["settings", "check-updates", "keep-on-top", "reset-positions", "show-hidden", "quit"]);
+        let d = UiStrings::default();
+        assert_eq!((d.check_updates.as_str(), d.keep_on_top.as_str()), ("Check for Updates…", "Keep Pets on Top"));
+        assert!(d.update_to.contains("{v}"));
         assert!(ids.iter().all(|i| pets::agent_of_hide_id(i).is_none()), "no clash with hide:<agent>");
     }
 }

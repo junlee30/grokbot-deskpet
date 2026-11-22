@@ -3,6 +3,7 @@ import { DEFAULT_MAILBOX, validateMailboxUrl } from "./net.ts";
 
 // App configuration: shipped defaults (public/deskpet.config.json) + local overrides from the
 // settings panel (localStorage). In dev builds the idle->sleeping timeout is short.
+// Keep Pets on Top is not here: the Rust side owns it (the menu bar toggles it too).
 
 export interface DeskPetConfig {
   /** v2 mailbox base URL used for the next new code (ntfy.sh or a self-hosted ntfy). */
@@ -15,6 +16,8 @@ export interface DeskPetConfig {
   petSize: PetSize;
   /** A macOS notification when a bot starts waiting for you (needs_you). */
   notifyNeedsYou: boolean;
+  /** Off: idle and sleeping pets hold still (no breathing, blinking or drifting z's). */
+  animateResting: boolean;
 }
 
 const SETTINGS_KEY = "deskpet.settings";
@@ -27,9 +30,10 @@ export const DEFAULTS: DeskPetConfig = {
   toastMs: 5000,
   petSize: "large",
   notifyNeedsYou: true,
+  animateResting: true,
 };
 
-export type Settings = Partial<Pick<DeskPetConfig, "mailboxUrl" | "petSize" | "notifyNeedsYou">>;
+export type Settings = Partial<Pick<DeskPetConfig, "mailboxUrl" | "petSize" | "notifyNeedsYou" | "animateResting">>;
 
 function readSettings(): Settings {
   try {
@@ -62,6 +66,7 @@ export async function loadConfig(): Promise<DeskPetConfig> {
   if (s.mailboxUrl) cfg.mailboxUrl = s.mailboxUrl;
   if (s.petSize === "large" || s.petSize === "small") cfg.petSize = s.petSize;
   if (typeof s.notifyNeedsYou === "boolean") cfg.notifyNeedsYou = s.notifyNeedsYou;
+  if (typeof s.animateResting === "boolean") cfg.animateResting = s.animateResting;
   const mb = validateMailboxUrl(cfg.mailboxUrl);
   cfg.mailboxUrl = mb.ok ? mb.url : DEFAULTS.mailboxUrl;
   return cfg;

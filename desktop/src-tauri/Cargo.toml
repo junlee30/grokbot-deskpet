@@ -27,6 +27,8 @@ base64 = "0.22"
 getrandom = "0.3"
 tauri-plugin-notification = "2"
 regex = "1"
+# In-place updates: Settings → Updates and the menu bar (updater.rs). OS TLS like the rest.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "zip", "system-proxy"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # "Is Grok Bot installed?" (NSWorkspace URLForApplicationToOpenURL:) before a pet click opens it.

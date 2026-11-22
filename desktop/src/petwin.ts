@@ -101,6 +101,8 @@ export interface FrameClock {
   faceUntil?: number;
   /** When the bubble's toast expires, if one is up. */
   toastUntil?: number;
+  /** A resting pet held still (Settings → Motion off): only a toast can change it. */
+  still?: boolean;
 }
 
 /** The next multiple of `period` after `t` (t >= 0). */
@@ -109,12 +111,14 @@ const nextStep = (t: number, period: number) => (Math.floor(t / period) + 1) * p
 /**
  * When the next frame could differ from this one. Robot sprites step at their fps; resting
  * avatars (idle, sleeping, offline) change only on the face player's schedule and their slow
- * breathing / z steps (avatar.ts avatarCue). Anything busier is drawn every tick.
+ * breathing / z steps (avatar.ts avatarCue); a pet held still changes only with its toast.
+ * Anything busier is drawn every tick.
  */
 export function nextChangeAt(c: FrameClock): number {
   const t = Math.max(0, c.now - c.animStart);
   let next = c.now; // as soon as possible
-  if (c.art === "robot" && c.robotFps && c.robotFps > 0) {
+  if (c.still) next = Infinity;
+  else if (c.art === "robot" && c.robotFps && c.robotFps > 0) {
     next = c.animStart + nextStep((t * c.robotFps) / 1000, 1) * (1000 / c.robotFps);
   } else if (c.art === "avatar" && c.faceUntil !== undefined) {
     if (c.state === "idle") next = Math.min(c.faceUntil, c.animStart + nextStep(t, 1200));

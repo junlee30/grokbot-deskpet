@@ -123,6 +123,8 @@ Menu bar icon → **Settings…** (or right-click a pet):
 - **Skill:** **Copy Skill Link**, to add Desk Pet to your Grok Bot skill library by hand.
 - **Mailbox:** `https://ntfy.sh` or your own ntfy server, used for the next new code.
 - **Pet size**, **Alerts** ("Notify me when a bot needs me") and **Reset Pet Positions**.
+- **Pets:** **Keep on top of other windows** (also in the menu bar menu as **Keep Pets on Top**). When it's off, pets sit behind your windows and come forward while their bot needs you. **Move while resting or asleep**: when it's off, idle and sleeping pets hold still (no breathing, blinking or drifting z's), and a pet whose bot is busy still moves.
+- **Updates:** **Check Now**, then **Install and Relaunch**. The menu bar menu has **Check for Updates…**, and Desk Pet also checks on its own every few hours. Updates are signed, and Desk Pet refuses one whose signature doesn't match.
 
 ## Troubleshooting
 

@@ -128,7 +128,7 @@ export function petWindowSize(pref: PetSize): { width: number; height: number } 
 /** The control window (index.html): a fixed width, as tall as its panel for the current view. */
 export const CONTROL_W = 360;
 export const CONTROL_MIN_H = 120;
-export const CONTROL_MAX_H = 520;
+export const CONTROL_MAX_H = 640;
 
 export function controlWindowSize(panelH: number): { width: number; height: number } {
   const h = Number.isFinite(panelH) ? Math.ceil(panelH) : CONTROL_MIN_H;

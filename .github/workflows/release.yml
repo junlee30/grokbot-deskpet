@@ -6,6 +6,10 @@ name: Release
 # Unsigned by default: the app is ad-hoc signed, so people open it the first time with
 # right-click → Open. Add the APPLE_* secrets (see docs/RELEASING.md) and the same workflow
 # signs and notarizes instead.
+#
+# In-place updates: with the TAURI_SIGNING_PRIVATE_KEY (+ _PASSWORD) secrets, the build also
+# makes the app as a signed .tar.gz, and the release gets it plus latest.json, which installed
+# apps read from releases/latest (src-tauri/src/updater.rs). Tag builds need the key.
 
 on:
   push:
@@ -20,6 +24,7 @@ jobs:
     runs-on: macos-latest
     env:
       HAS_SIGNING: ${{ secrets.APPLE_CERTIFICATE != '' }}
+      HAS_UPDATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
       # Never pick up Grok Bot's art on CI, even if a runner image ever ships the app: it is
       # not ours to redistribute. The app copies it from the user's own Grok Bot at runtime
       # (docs/DESIGN.md, "Grok Bot avatar art").
@@ -47,6 +52,18 @@ jobs:
           want="$(node -p 'require("./desktop/src-tauri/tauri.conf.json").version')"
           [ "${GITHUB_REF_NAME#v}" = "$want" ] || { echo "tag $GITHUB_REF_NAME != app version $want"; exit 1; }
 
+      - name: Update signing key
+        run: |
+          if [ "$HAS_UPDATE_KEY" = "true" ]; then
+            echo 'UPDATER_CONFIG={"bundle":{"createUpdaterArtifacts":true}}' >> "$GITHUB_ENV"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY isn't set: installed apps couldn't update to this release (docs/DEVELOPMENT.md, Releasing)"
+            exit 1
+          else
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY isn't set: building without update artifacts"
+            echo 'UPDATER_CONFIG={}' >> "$GITHUB_ENV"
+          fi
+
       - name: Install frontend dependencies
         working-directory: desktop
         run: npm ci --no-audit --no-fund
@@ -56,7 +73,9 @@ jobs:
         working-directory: desktop
         env:
           APPLE_SIGNING_IDENTITY: "-"
-        run: npx --yes @tauri-apps/cli@2 build --target universal-apple-darwin --bundles app,dmg
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx --yes @tauri-apps/cli@2 build --target universal-apple-darwin --bundles app,dmg --config "$UPDATER_CONFIG"
 
       - name: Build (signed and notarized)
         if: env.HAS_SIGNING == 'true'
@@ -68,7 +87,9 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npx --yes @tauri-apps/cli@2 build --target universal-apple-darwin --bundles app,dmg
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx --yes @tauri-apps/cli@2 build --target universal-apple-darwin --bundles app,dmg --config "$UPDATER_CONFIG"
 
       - name: No Grok Bot art in the bundle
         run: |
@@ -80,6 +101,24 @@ jobs:
             echo "Grok Bot art found in the bundle; refusing to publish it"; exit 1
           fi
 
+      - name: Update manifest (latest.json)
+        if: env.HAS_UPDATE_KEY == 'true'
+        run: |
+          bundle=desktop/src-tauri/target/universal-apple-darwin/release/bundle/macos
+          version="$(node -p 'require("./desktop/src-tauri/tauri.conf.json").version')"
+          asset="Desk.Pet_${version}_universal.app.tar.gz"
+          mkdir -p upd
+          cp "$bundle/Desk Pet.app.tar.gz" "upd/$asset"
+          # One universal app serves both Macs. The URL only works for a tag build's release.
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/v$version/$asset"
+          notes="$(awk -v v="$version" '$0 ~ "^## " v " " {on=1; next} /^## / {on=0} on' CHANGELOG.md)"
+          jq -n --arg v "$version" --arg notes "$notes" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg sig "$(cat "$bundle/Desk Pet.app.tar.gz.sig")" --arg url "$url" \
+            '{version: $v, notes: $notes, pub_date: $date,
+              platforms: {"darwin-aarch64": {signature: $sig, url: $url}, "darwin-x86_64": {signature: $sig, url: $url}}}' \
+            > upd/latest.json
+          jq '.platforms | keys' upd/latest.json
+
       - name: Draft GitHub release
         if: startsWith(github.ref, 'refs/tags/')
         env:
@@ -88,7 +127,7 @@ jobs:
           dmg="$(ls desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg)"
           notes="Unsigned build: the first time, right-click Desk Pet.app → Open."
           [ "$HAS_SIGNING" = "true" ] && notes="Signed and notarized."
-          gh release create "$GITHUB_REF_NAME" "$dmg" --draft --title "Desk Pet $GITHUB_REF_NAME" --notes "$notes"
+          gh release create "$GITHUB_REF_NAME" "$dmg" upd/* --draft --title "Desk Pet $GITHUB_REF_NAME" --notes "$notes"
 
       - name: Keep the build (manual runs)
         if: "!startsWith(github.ref, 'refs/tags/')"

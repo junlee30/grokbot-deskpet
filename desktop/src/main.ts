@@ -21,6 +21,9 @@ document.documentElement.lang = ui;
 void invokeCmd("set_ui_strings", {
   strings: {
     settings: t.menuSettings,
+    check_updates: t.menuCheckUpdates,
+    update_to: t.menuUpdateTo,
+    keep_on_top: t.menuKeepOnTop,
     reset_positions: t.resetPositions,
     show_hidden: t.showHidden,
     quit: t.quit,
@@ -110,9 +113,24 @@ app.innerHTML = `
           <div class="value"><label class="check"><input type="checkbox" id="s-notify" /><span>${t.notifyMe}</span></label></div>
         </div>
         <div class="row">
+          <span class="label">${t.pets}</span>
+          <div class="value checks">
+            <label class="check"><input type="checkbox" id="s-on-top" /><span>${t.keepOnTop}</span></label>
+            <label class="check"><input type="checkbox" id="s-animate" /><span>${t.animateResting}</span></label>
+          </div>
+          <div class="note">${t.keepOnTopNote}</div>
+        </div>
+        <div class="row">
           <span class="label">${t.positions}</span>
           <div class="value"><button type="button" class="small" id="s-reset-pos">${t.resetPositions}</button></div>
           <div class="note" id="s-reset-note"></div>
+        </div>
+        <div class="row" id="s-updates-row">
+          <span class="label">${t.updates}</span>
+          <div class="value">
+            <span class="state-line" id="s-update-state"></span>
+            <button type="button" class="small" id="s-update"></button>
+          </div>
         </div>
       </div>
       <div class="foot">
@@ -336,6 +354,8 @@ async function openSettings(): Promise<void> {
   $("s-mailbox-note").classList.remove("error");
   for (const r of sizeRadios()) r.checked = r.value === cfg.petSize;
   $<HTMLInputElement>("s-notify").checked = cfg.notifyNeedsYou;
+  $<HTMLInputElement>("s-animate").checked = cfg.animateResting;
+  $<HTMLInputElement>("s-on-top").checked = (await invokeCmd<boolean>("pets_on_top").catch(() => undefined)) ?? true;
   $("s-reset-note").textContent = "";
   $("s-skill-note").textContent = "";
   disarm($<HTMLButtonElement>("s-v2-new"), t.newCode);
@@ -371,13 +391,78 @@ async function saveSettingsFromForm(): Promise<void> {
     mailboxUrl: mb.url,
     petSize: size === "small" ? "small" : "large",
     notifyNeedsYou: $<HTMLInputElement>("s-notify").checked,
+    animateResting: $<HTMLInputElement>("s-animate").checked,
   });
+  await invokeCmd("pets_set_on_top", { onTop: $<HTMLInputElement>("s-on-top").checked }).catch(() => {});
   cfg = await loadConfig();
   await applyPetSize();
   void broadcast("deskpet:config").catch(() => {}); // the pets reload their settings
   closeSettings();
   showPairMode();
 }
+
+// ---------- updates (Rust: src-tauri/src/updater.rs) ----------
+// Check for Updates… in the menu bar opens Settings and checks; a newer version found by the
+// app's own background check shows up here too. Install downloads, verifies the signature,
+// replaces the app and relaunches it.
+type UpdateView =
+  | { kind: "idle" | "checking" | "latest" | "installing" | "check-failed" | "install-failed" }
+  | { kind: "found"; version: string }
+  | { kind: "downloading"; pct: number | null };
+let update: UpdateView = { kind: "idle" };
+const updateBusy = () => update.kind === "checking" || update.kind === "downloading" || update.kind === "installing";
+
+function renderUpdate(): void {
+  const btn = $<HTMLButtonElement>("s-update");
+  const u = update;
+  const line =
+    u.kind === "checking" ? t.checking
+    : u.kind === "latest" ? t.upToDate
+    : u.kind === "found" ? t.updateFound(u.version)
+    : u.kind === "downloading" ? t.downloading(u.pct)
+    : u.kind === "installing" ? t.installing
+    : u.kind === "check-failed" ? t.checkFailed
+    : u.kind === "install-failed" ? t.installFailed
+    : "";
+  setText("s-update-state", line);
+  $("s-update-state").hidden = !line;
+  btn.textContent = u.kind === "found" ? t.installRelaunch : u.kind.endsWith("failed") ? t.tryAgain : t.checkNow;
+  btn.classList.toggle("primary", u.kind === "found" || u.kind === "install-failed");
+  btn.disabled = updateBusy();
+  fitWindow();
+}
+
+async function checkForUpdates(): Promise<void> {
+  if (updateBusy()) return;
+  update = { kind: "checking" };
+  renderUpdate();
+  try {
+    const found = await invokeCmd<{ version: string } | null>("update_check");
+    update = found ? { kind: "found", version: found.version } : { kind: "latest" };
+  } catch {
+    update = { kind: "check-failed" };
+  }
+  renderUpdate();
+}
+
+async function installUpdate(): Promise<void> {
+  if (updateBusy()) return;
+  update = { kind: "downloading", pct: null };
+  renderUpdate();
+  try {
+    await invokeCmd("update_install"); // relaunches the app when it works
+  } catch {
+    update = { kind: "install-failed" };
+    renderUpdate();
+  }
+}
+
+$("s-update").addEventListener("click", () => {
+  if (update.kind === "found" || update.kind === "install-failed") void installUpdate();
+  else void checkForUpdates();
+});
+$("s-updates-row").hidden = !inTauri;
+renderUpdate();
 
 $("gear").addEventListener("click", () => ($("settings").hidden ? void openSettings() : closeSettings()));
 $("s-close").addEventListener("click", closeSettings);
@@ -502,6 +587,21 @@ async function boot(): Promise<void> {
   cfg = await loadConfig();
   await applyPetSize(); // before the first bot window opens
   void onEvent("ui:open-settings", () => void openSettings()); // menu bar icon, ⚙ or right-click on a pet
+  void onEvent("ui:check-updates", () => void checkForUpdates()); // menu bar: Check for Updates…
+  void onEvent<{ version: string } | null>("update:found", (f) => {
+    if (updateBusy() || update.kind === "install-failed") return;
+    update = f ? { kind: "found", version: f.version } : update.kind === "found" ? { kind: "idle" } : update;
+    renderUpdate();
+  });
+  void onEvent<{ done?: number; total?: number | null; installing?: boolean }>("update:progress", (p) => {
+    if (update.kind !== "downloading" && update.kind !== "installing") return;
+    update = p.installing
+      ? { kind: "installing" }
+      : { kind: "downloading", pct: p.total ? Math.min(100, Math.floor(((p.done ?? 0) * 100) / p.total)) : null };
+    renderUpdate();
+  });
+  // Keep Pets on Top changed from the menu bar: an open Settings card follows it.
+  void onEvent<boolean>("pets:on-top", (on) => ($<HTMLInputElement>("s-on-top").checked = on));
   void appVersion().then((v) => v && setText("s-version", t.version(v)));
   mailbox = inTauri ? new TauriMailbox() : new NoMailbox();
   showPairMode();

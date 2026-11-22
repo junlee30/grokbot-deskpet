@@ -471,6 +471,19 @@ export function calmCue(c: Cue): Cue {
   return { ...c, dx: 0, dy: 0, sx: 0, sy: 0, lean: 0 };
 }
 
+/** The states a pet rests in (Settings → Motion can hold them still). */
+export const isResting = (s: string): s is "idle" | "sleeping" => s === "idle" || s === "sleeping";
+
+/**
+ * A resting pet held still (Settings → Motion off): one frame per state. Idle looks ahead with
+ * its eyes open; asleep, its eyes stay shut under two z's that don't drift.
+ */
+export function stillAvatar(state: "idle" | "sleeping", g: AvatarGeometry): { face: number; cue: Cue } {
+  // 1200 ms into the sleep loop both z's are up and fully drawn.
+  const cue = calmCue(avatarCue(state, state === "sleeping" ? 1200 : 0, g));
+  return { face: state === "sleeping" ? FACE.blinkClosed : FACE.rest, cue };
+}
+
 /** How long the one-shot "done" celebration lasts on an avatar; then the pet settles to idle. */
 export const AVATAR_DONE_MS = 1800;
 export const BADGE = 11;

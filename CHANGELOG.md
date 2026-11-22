@@ -5,6 +5,15 @@ The bot skill has its own versions (`skill-v…` tags); the skill version each a
 
 ## Unreleased
 
+- **Updates from the menu bar:** **Check for Updates…** (it becomes **Update to X…** when
+  Desk Pet's own check, every few hours, finds one) and Settings → **Updates** download the
+  new version, check its signature, install it and relaunch. 0.4.0 has no updater, so
+  updating to this version is still a manual download or `brew upgrade`.
+- **Pets behind your windows:** turn off **Keep Pets on Top** (menu bar menu or Settings →
+  Pets). Pets then stay behind other windows and come forward only while their bot needs you.
+- **Calmer resting pets:** turn off Settings → Pets → **Move while resting or asleep** to hold
+  idle and sleeping pets still (no breathing, blinking or drifting z's). Busy states still
+  move.
 - **Security:** the mailbox connection no longer follows a redirect from `https` to plain
   `http`, which would have sent the topic name unencrypted.
 - **Ask your Grok Bot to install it:** paste one line from the README; the bot follows

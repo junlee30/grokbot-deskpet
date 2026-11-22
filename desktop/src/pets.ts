@@ -6,7 +6,7 @@ import { petLocale, strings, type Locale } from "./i18n.ts";
 import type { PetState, StateEvent } from "./events.ts";
 import { displayFor, eventOrder, type Session } from "./sessions.ts";
 import { accentFor, type AnimState, type SpriteBank } from "./sprites.ts";
-import { accentHex, AVATAR_DONE_MS, avatarCue, calmCue, avatarGeometry, colorHex, FacePlayer, parseAvatar, type Avatar } from "./avatar.ts";
+import { accentHex, AVATAR_DONE_MS, avatarCue, calmCue, avatarGeometry, colorHex, FacePlayer, isResting, parseAvatar, stillAvatar, type Avatar } from "./avatar.ts";
 import { drawAvatar, type AvatarBank } from "./avatar-bank.ts";
 import { nextChangeAt, samePixels, type FrameClock } from "./petwin.ts";
 
@@ -306,7 +306,7 @@ export class Pet {
   }
 
   /** Draw the Grok Bot avatar. False when its art isn't available (caller draws the robot). */
-  private drawAvatarFrame(want: AnimState, now: number): boolean {
+  private drawAvatarFrame(want: AnimState, now: number, still: boolean): boolean {
     const av = this.avatar;
     const art = this.art;
     const slot = this.slot;
@@ -323,9 +323,13 @@ export class Pet {
     }
     const t = now - this.anim.start;
     if (want === "done" && t >= AVATAR_DONE_MS) this.playedDoneSeq = this.doneSeq;
-    const cue = Pet.reducedMotion ? calmCue(avatarCue(want, t, g)) : avatarCue(want, t, g);
-    const face = this.face.frameAt(cue.face, now);
-    this.clock = { art: "avatar", state: want, now, animStart: this.anim.start, faceUntil: this.face.nextChangeAt };
+    let cue, face;
+    if (still && isResting(want)) ({ cue, face } = stillAvatar(want, g));
+    else {
+      cue = Pet.reducedMotion ? calmCue(avatarCue(want, t, g)) : avatarCue(want, t, g);
+      face = this.face.frameAt(cue.face, now);
+    }
+    this.clock = { art: "avatar", state: want, now, animStart: this.anim.start, faceUntil: this.face.nextChangeAt, still };
     const key = `avatar|${g.backing}|${g.res}|${av.shape}|${colorHex(av.color, art.palette)}|${face}|${JSON.stringify(cue)}`;
     this.paintIf(key, () => drawAvatar(this.paint, strip, g, face, cue));
     return true;
@@ -344,7 +348,9 @@ export class Pet {
     if (want !== this.anim.state) this.anim = { state: want, start: now };
     if (this.el.dataset.state !== want) this.el.dataset.state = want;
     this.syncBubble(now, want, cfg.staleActiveMs);
-    if (!this.drawAvatarFrame(want, now)) this.drawRobotFrame(bank, want, now);
+    // Settings → Motion off: resting pets hold still; anything a bot is doing still moves.
+    const still = !cfg.animateResting && isResting(want);
+    if (!this.drawAvatarFrame(want, now, still)) this.drawRobotFrame(bank, want, now, still);
   }
 
   /** Paint the scratch frame and show it, unless it was already painted from the same inputs. */
@@ -365,15 +371,15 @@ export class Pet {
     this.ctx.drawImage(this.scratch, 0, 0);
   }
 
-  private drawRobotFrame(bank: SpriteBank, want: AnimState, now: number): void {
+  private drawRobotFrame(bank: SpriteBank, want: AnimState, now: number, still: boolean): void {
     this.setMode("robot", 32);
     const def = bank.defs[want];
     if (!def) {
       this.clock = null;
       return;
     }
-    this.clock = { art: "robot", state: want, now, animStart: this.anim.start, robotFps: def.fps };
-    let frame = Math.floor(((now - this.anim.start) * def.fps) / 1000);
+    this.clock = { art: "robot", state: want, now, animStart: this.anim.start, robotFps: def.fps, still };
+    let frame = still ? 0 : Math.floor(((now - this.anim.start) * def.fps) / 1000);
     if (def.loop) frame %= def.frames;
     else if (frame >= def.frames) {
       frame = def.frames - 1;

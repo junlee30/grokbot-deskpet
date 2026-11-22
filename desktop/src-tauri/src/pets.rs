@@ -101,6 +101,9 @@ pub struct Store {
     pub positions: BTreeMap<String, Pos>,
     #[serde(default)]
     clock: u64,
+    /// Keep Pets on Top turned off: pets sit behind other windows (in_front).
+    #[serde(default)]
+    pub behind: bool,
 }
 
 impl Store {
@@ -245,6 +248,14 @@ pub fn hide_label(name: &str) -> String {
     format!("Hide {}", if cut.is_empty() { "Pet".into() } else { cut })
 }
 
+// ---------------------------------------------------------------- window level
+
+/// Whether a pet floats above other windows: always with Keep Pets on Top; otherwise only
+/// while its bot needs you, so a question still gets seen.
+pub fn in_front(keep_on_top: bool, needs_you: bool) -> bool {
+    keep_on_top || needs_you
+}
+
 /// A hidden pet stays hidden through heartbeats (a long turn re-posting its state); anything
 /// else its bot does (a new turn, a tool, a question, done) brings it back.
 pub fn stays_hidden(event: &serde_json::Value) -> bool {
@@ -327,6 +338,20 @@ mod tests {
         let mut back = back;
         back.set("jarvis", (5, 6));
         assert_eq!(Store::from_json(&back.to_json()).get("jarvis"), Some((5, 6)));
+    }
+
+    #[test]
+    fn keep_on_top_is_saved_and_defaults_on() {
+        assert!(!Store::from_json(br#"{"positions":{}}"#).behind, "older files keep pets on top");
+        let mut s = Store { behind: true, ..Default::default() };
+        s.set("jarvis", (1, 2));
+        let back = Store::from_json(&s.to_json());
+        assert!(back.behind);
+        let mut cleared = back.clone();
+        cleared.clear();
+        assert!(cleared.behind, "Reset Pet Positions keeps the setting");
+        assert!(in_front(true, false) && in_front(false, true) && in_front(true, true));
+        assert!(!in_front(false, false), "behind windows unless the bot needs you");
     }
 
     #[test]

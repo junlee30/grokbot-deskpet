@@ -71,6 +71,11 @@ describe("render loop schedule", () => {
     assert.equal(nextChangeAt({ art: "avatar", state: "working", now, animStart: now, faceUntil: now + 5000 }), now);
     assert.equal(nextChangeAt({ art: "avatar", state: "offline", now, animStart: now, faceUntil: now + 60_000, toastUntil: now + 700 }), now + 700);
   });
+  it("a pet held still (Settings → Motion off) waits for its toast and nothing else", () => {
+    assert.equal(nextChangeAt({ art: "avatar", state: "sleeping", now, animStart: now - 1550, faceUntil: now + 40, still: true }), Infinity);
+    assert.equal(nextChangeAt({ art: "robot", state: "idle", now, animStart: now, robotFps: 4, still: true, toastUntil: now + 700 }), now + 700);
+    assert.equal(frameDelay(Infinity, now), MAX_SLEEP_MS);
+  });
   it("frameDelay stays between one tick and a second", () => {
     assert.equal(frameDelay(now, now), FRAME_MS);
     assert.equal(frameDelay(now + 200, now), 200);

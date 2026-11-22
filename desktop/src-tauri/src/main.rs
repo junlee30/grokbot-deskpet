@@ -1,8 +1,8 @@
 // Desk Pet, for Grok Bot (unofficial; not affiliated with xAI).
 //
 // Rust side: the main (pairing + settings) window and its position memory, one transparent
-// always-on-top window per bot (pet_windows.rs, pets.rs), the menu bar icon, the opener plugin
-// and the v2 private-mailbox client (ntfy SSE + XChaCha20-Poly1305, pairing in the macOS
+// window per bot (pet_windows.rs, pets.rs), the menu bar icon, in-place updates (updater.rs),
+// the opener plugin and the v2 private-mailbox client (ntfy SSE + XChaCha20-Poly1305, pairing in the macOS
 // Keychain). The webviews get status/state events; only the main window sees the pairing
 // string, and only to show/copy the paste line.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -15,6 +15,7 @@ mod pet_windows;
 mod pets;
 mod secrets;
 mod stream;
+mod updater;
 mod v2;
 mod window_state;
 
@@ -167,10 +168,12 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Http(stream::http_client()))
         .manage(MailboxState::default())
         .manage(pet_windows::PetWindows::default())
         .manage(grokbot_art::ArtState::default())
+        .manage(updater::UpdateState::default())
         .on_menu_event(|app, ev| pet_windows::on_menu(app, ev.id().as_ref()))
         .invoke_handler(tauri::generate_handler![
             v2_normalize_url,
@@ -185,6 +188,8 @@ fn main() {
             pet_windows::pets_set_size,
             pet_windows::pets_close_all,
             pet_windows::pets_reset_positions,
+            pet_windows::pets_on_top,
+            pet_windows::pets_set_on_top,
             pet_windows::open_settings_window,
             pet_windows::pet_menu,
             pet_windows::pet_attention,
@@ -193,6 +198,8 @@ fn main() {
             grokbot::grokbot_installed,
             grokbot_art::grokbot_art_manifest,
             grokbot_art::grokbot_art_file,
+            updater::update_check,
+            updater::update_install,
         ])
         .setup(|app| {
             // A desk pet should not take a Dock slot or the app switcher on macOS.
@@ -208,6 +215,7 @@ fn main() {
                 window_state::track(&w);
                 let _ = w.show();
             }
+            updater::start(app.handle());
             pet_windows::selftest(app.handle());
             Ok(())
         })

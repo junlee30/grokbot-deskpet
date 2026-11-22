@@ -55,6 +55,22 @@ export interface Strings {
   small: string;
   alerts: string;
   notifyMe: string;
+  pets: string;
+  keepOnTop: string;
+  keepOnTopNote: string;
+  animateResting: string;
+  updates: string;
+  checkNow: string;
+  checking: string;
+  upToDate: string;
+  updateFound: (v: string) => string;
+  installRelaunch: string;
+  /** `pct` is null when the download's size isn't known. */
+  downloading: (pct: number | null) => string;
+  installing: string;
+  checkFailed: string;
+  installFailed: string;
+  tryAgain: string;
   positions: string;
   resetPositions: string;
   resetDoneSome: string;
@@ -79,6 +95,10 @@ export interface Strings {
   pasteLine: (skillUrl: string, code: string) => string;
   // ---- menus (built in Rust from these)
   menuSettings: string;
+  menuCheckUpdates: string;
+  /** `{v}` = the new version. */
+  menuUpdateTo: string;
+  menuKeepOnTop: string;
   showHidden: string;
   hide: (name: string) => string;
   /** Menu bar tooltip when one bot needs you, and when several do (`{n}` = how many). */
@@ -135,6 +155,21 @@ const en: Strings = {
   small: "Small",
   alerts: "Alerts",
   notifyMe: "Notify me when a bot needs me",
+  pets: "Pets",
+  keepOnTop: "Keep on top of other windows",
+  keepOnTopNote: "When not on top, pets stay behind your windows and come forward when a bot needs you.",
+  animateResting: "Move while resting or asleep",
+  updates: "Updates",
+  checkNow: "Check Now",
+  checking: "Checking…",
+  upToDate: "Desk Pet is up to date.",
+  updateFound: (v) => `Version ${v} is available.`,
+  installRelaunch: "Install and Relaunch",
+  downloading: (pct) => (pct === null ? "Downloading…" : `Downloading… ${pct}%`),
+  installing: "Installing…",
+  checkFailed: "Couldn't check for updates.",
+  installFailed: "Couldn't install the update.",
+  tryAgain: "Try Again",
   positions: "Positions",
   resetPositions: "Reset Pet Positions",
   resetDoneSome: "Done: lined up at the bottom right.",
@@ -163,6 +198,9 @@ const en: Strings = {
   urlTooLong: "URL too long",
   pasteLine: (url, code) => `Install the Desk Pet skill from ${url} and pair with code ${code}`,
   menuSettings: "Settings…",
+  menuCheckUpdates: "Check for Updates…",
+  menuUpdateTo: "Update to {v}…",
+  menuKeepOnTop: "Keep Pets on Top",
   showHidden: "Show Hidden Pets",
   hide: (name) => `Hide ${name}`,
   trayNeedsOne: "Desk Pet · 1 bot needs you",
@@ -217,6 +255,21 @@ const ko: Strings = {
   small: "작게",
   alerts: "알림",
   notifyMe: "봇이 나를 기다리면 알려 주기",
+  pets: "펫",
+  keepOnTop: "다른 창 위에 띄우기",
+  keepOnTopNote: "위에 띄우지 않으면 펫이 창 뒤에 있다가, 봇이 나를 기다릴 때 앞으로 나와요.",
+  animateResting: "쉬거나 잘 때도 움직이기",
+  updates: "업데이트",
+  checkNow: "지금 확인",
+  checking: "확인하는 중…",
+  upToDate: "최신 버전이에요.",
+  updateFound: (v) => `새 버전이 있어요: ${v}`,
+  installRelaunch: "설치 후 다시 열기",
+  downloading: (pct) => (pct === null ? "내려받는 중…" : `내려받는 중… ${pct}%`),
+  installing: "설치하는 중…",
+  checkFailed: "업데이트를 확인하지 못했어요.",
+  installFailed: "업데이트를 설치하지 못했어요.",
+  tryAgain: "다시 시도",
   positions: "위치",
   resetPositions: "펫 위치 초기화",
   resetDoneSome: "완료: 오른쪽 아래에 나란히 놓았어요.",
@@ -245,6 +298,9 @@ const ko: Strings = {
   urlTooLong: "URL이 너무 길어요",
   pasteLine: (url, code) => `${url} 에서 Desk Pet 스킬을 설치하고 이 코드로 페어링해 줘: ${code}`,
   menuSettings: "설정…",
+  menuCheckUpdates: "업데이트 확인…",
+  menuUpdateTo: "업데이트 {v} 설치…",
+  menuKeepOnTop: "펫을 항상 위에",
   showHidden: "숨긴 펫 보기",
   hide: (name) => `${name} 숨기기`,
   trayNeedsOne: "Desk Pet · 봇 1개가 기다리는 중",

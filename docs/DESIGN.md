@@ -32,10 +32,13 @@ The UI follows Apple's HIG for menu bar extras, app icons, Dark Mode, typography
 
 ## Desktop behaviour
 
-- **One window per bot.** Each `agent_id` gets its own transparent, frameless, always-on-top
+- **One window per bot.** Each `agent_id` gets its own transparent, frameless, floating
   window (Large 184×166, Small 152×134), opened on that bot's first event and sized for the
   pet, its toast or working label above it, and its name below, so one bot's bubble never
   covers another bot. Pet windows never take keyboard focus.
+  - **Keep Pets on Top** (menu bar menu and Settings, saved in `pets.json`): on, pets float
+    above other windows; off, they sit just below normal windows (still above the desktop
+    icons) and a pet floats up only while its bot needs you.
   - **Drag** a pet (or the space around it) to move just that bot's window, anywhere, including
     onto another monitor. A click (no drag) opens Grok Bot on that bot's chat (below).
   - **Positions are remembered per bot** across restarts in the app config dir (`pets.json`,
@@ -83,6 +86,9 @@ The UI follows Apple's HIG for menu bar extras, app icons, Dark Mode, typography
   - **done** (once, 1.8 s): crouch, big leap with a confetti burst and `✓`, a little hop, then
     it settles and goes back to idle;
   - **sleeping**: eyes closed, rising z's; **offline**: dimmed.
+  - Settings → Pets → **Move while resting or asleep** off: idle and sleeping hold one still
+    frame (sleeping keeps two z's so it still reads as asleep) and the render loop only wakes
+    for a toast; every other state animates as usual.
 
   Squash/stretch and lean drop or repeat whole pixel rows/columns and are drawn as a few 1:1
   copies (`warpPlan`), so the art stays pixel-crisp. Without the imported art (or for bots

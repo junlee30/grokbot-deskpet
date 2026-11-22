@@ -11,6 +11,8 @@ import {
   avatarCue,
   calmCue,
   avatarGeometry,
+  isResting,
+  stillAvatar,
   avatarStyle,
   axisMap,
   CLOUD,
@@ -360,6 +362,20 @@ describe("state cues", () => {
       return [...new Set(cs.flatMap((c) => c.overlays.map((o) => (o.kind === "badge" ? `badge:${o.icon}` : o.kind))))].sort().join(",");
     });
     assert.equal(new Set(sigs).size, list.length, JSON.stringify(sigs));
+  });
+
+  it("Motion off: resting pets are one still frame, eyes shut under two z's when asleep", () => {
+    const idle = stillAvatar("idle", g);
+    const asleep = stillAvatar("sleeping", g);
+    assert.equal(idle.face, FACE.rest);
+    assert.equal(asleep.face, FACE.blinkClosed);
+    for (const { cue } of [idle, asleep]) assert.deepEqual([cue.dx, cue.dy, cue.sx, cue.sy, cue.lean], [0, 0, 0, 0, 0]);
+    assert.deepEqual(idle.cue.overlays, []);
+    const zs = asleep.cue.overlays.filter((o) => o.kind === "z");
+    assert.equal(zs.length, 2, "still reads as asleep");
+    assert.ok(zs.every((z) => z.kind === "z" && z.alpha === 1));
+    assert.deepEqual(stillAvatar("sleeping", g), asleep, "the same frame every time");
+    assert.ok(isResting("idle") && isResting("sleeping") && !isResting("working") && !isResting("needs_you"));
   });
 
   it("juggling throws balls high over the head; needs_you hops and wiggles; error slumps and shudders", () => {

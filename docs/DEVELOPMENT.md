@@ -167,13 +167,25 @@ same workflow signs and notarizes instead:
 | `APPLE_SIGNING_IDENTITY` | e.g. `Developer ID Application: Your Name (TEAMID)` |
 | `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` | notarization: Apple ID, an app-specific password, team id |
 
-**Auto-update (not wired yet).** `tauri-plugin-updater` needs an update signing key pair whose
-public key is built into the app, so it is a one-time decision: run `cargo tauri signer
-generate -w ~/.tauri/deskpet.key`, keep the private key safe, add it as the
-`TAURI_SIGNING_PRIVATE_KEY` (+ `_PASSWORD`) secrets, put the public key and a
-`https://github.com/<owner>/<repo>/releases/latest/download/latest.json` endpoint under
-`plugins.updater` in `tauri.conf.json`, set `bundle.createUpdaterArtifacts`, and upload the
-generated `latest.json` with each release. Updating works best on signed builds.
+**In-place updates.** `tauri-plugin-updater` (src-tauri/src/updater.rs) reads
+`https://github.com/junlee30/grokbot-deskpet/releases/latest/download/latest.json` and only
+installs a `.tar.gz` signed with the update key, whose public half is `plugins.updater.pubkey`
+in `tauri.conf.json`. The private key is `~/.tauri/deskpet.key` (password in
+`~/.tauri/deskpet.key.password`); keep both backed up, because losing them means installed apps
+can't update again without a manual reinstall. They must be repository secrets:
+
+```sh
+gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/deskpet.key
+gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD < ~/.tauri/deskpet.key.password
+```
+
+With them, the Release workflow builds the update archive and attaches
+`Desk.Pet_<version>_universal.app.tar.gz` and `latest.json` (notes taken from this version's
+CHANGELOG section) to the draft. Without them, a tag build fails. Installed apps see a new
+version only once its release is **published** (`releases/latest` skips drafts). Local
+`cargo tauri build` makes no update archive unless you pass
+`--config '{"bundle":{"createUpdaterArtifacts":true}}'` and the two variables. Debug builds
+can check for updates but never install one and run no background checks.
 
 ## Known gaps
 

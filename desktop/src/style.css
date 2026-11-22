@@ -500,6 +500,13 @@ button > svg {
   font-size: 12px;
 }
 
+/* Checkboxes stacked one per line (Pets). */
+.value.checks {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
 /* A checkbox with its label (Notifications). */
 .check {
   display: inline-flex;
